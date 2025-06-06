@@ -16,11 +16,8 @@ pipeline {
     }
 
     stages {
-        stage('Checkout') {
-            steps {
-                git branch: 'main', url: 'https://github.com/MrWeasel9/bachelor-MLOps-deployment-pipeline.git'
-            }
-        }
+        // The built-in “Declarative: Checkout SCM” stage runs automatically,
+        // so there’s no need for a separate ‘git’ step here.
         stage('Terraform Init') {
             steps {
                 dir('terraform') {
@@ -40,7 +37,7 @@ pipeline {
                 expression { return !params.DO_DESTROY }
             }
             steps {
-                input "Deploy new cluster? This will create/destroy cloud resources!" // Manual approval
+                input "Deploy new cluster? This will create/destroy cloud resources!"
                 dir('terraform') {
                     sh 'terraform apply -auto-approve'
                 }

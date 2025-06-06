@@ -44,5 +44,33 @@ pipeline {
                 }
             }
         }
+
+        stage('Configure RKE2') {
+            steps {
+                withCredentials([file(credentialsId: 'gcp-terraform-key', variable: 'GCLOUD_AUTH')]) {
+                    // Auth gcloud for this shell session
+                    sh '''
+                        gcloud auth activate-service-account --key-file=$GCLOUD_AUTH
+                        gcloud config set project bachelors-project-461620
+                        gcloud config set compute/zone europe-central2-a
+
+                        # Install RKE2 on master
+                        gcloud compute ssh mlops-master --command="curl -sfL https://get.rke2.io | sudo sh - && sudo systemctl enable rke2-server && sudo systemctl start rke2-server"
+
+                        # Wait a bit for the server to become ready
+                        sleep 60
+
+                        # Fetch the node token from master for joining workers
+                        NODE_TOKEN=$(gcloud compute ssh mlops-master --command='sudo cat /var/lib/rancher/rke2/server/node-token' --quiet)
+
+                        # Install RKE2 and join cluster on worker 1
+                        gcloud compute ssh mlops-worker-1 --command="curl -sfL https://get.rke2.io | sudo sh - && echo -e 'server: https://10.186.0.4:9345\\ntoken: $NODE_TOKEN' | sudo tee /etc/rancher/rke2/config.yaml && sudo systemctl enable rke2-agent && sudo systemctl start rke2-agent"
+
+                        # Install RKE2 and join cluster on worker 2
+                        gcloud compute ssh mlops-worker-2 --command="curl -sfL https://get.rke2.io | sudo sh - && echo -e 'server: https://10.186.0.4:9345\\ntoken: $NODE_TOKEN' | sudo tee /etc/rancher/rke2/config.yaml && sudo systemctl enable rke2-agent && sudo systemctl start rke2-agent"
+                    '''
+                }
+            }
+        }
     }
 }

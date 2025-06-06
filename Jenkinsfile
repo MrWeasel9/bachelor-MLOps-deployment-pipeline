@@ -32,6 +32,8 @@ pipeline {
                                 input message: "Deploy new/updated cluster? (This creates/destroys cloud resources!)", ok: "Yes, apply!"
                                 sh "terraform apply -no-color -auto-approve -var=\"credentials_file=${GCLOUD_AUTH}\" -var=\"project=bachelors-project-461620\""
 
+                                sleep(time: 30, unit: 'SECONDS')
+
                                 // Get IPs into Groovy variables
                                 MASTER_INTERNAL_IP = sh(script: "terraform output -raw master_internal_ip", returnStdout: true).trim()
                                 WORKER1_INTERNAL_IP = sh(script: "terraform output -raw worker_1_internal_ip", returnStdout: true).trim()
@@ -69,6 +71,39 @@ pipeline {
                 }
             }
         }
+
+        stage('Export kubeconfig for Local Use') {
+        when {
+            expression { !params.DO_DESTROY }
+        }
+        steps {
+            withCredentials([file(credentialsId: 'gcp-terraform-key', variable: 'GCLOUD_AUTH')]) {
+                
+                sh """
+                gcloud auth activate-service-account --key-file=\$GCLOUD_AUTH
+                gcloud config set project bachelors-project-461620
+                gcloud config set compute/zone europe-central2-a
+
+                # 1. Copy kubeconfig from master and make it accessible
+                gcloud compute ssh mlops-master --command='sudo cp /etc/rancher/rke2/rke2.yaml /tmp/rke2.yaml && sudo chown $(whoami) /tmp/rke2.yaml'
+                gcloud compute scp mlops-master:/tmp/rke2.yaml ./rke2-raw.yaml
+
+                # 2. Replace server IP for external access
+                sed 's/127.0.0.1/${MASTER_EXTERNAL_IP}/' ./rke2-raw.yaml > rke2-for-local.yaml
+
+                # 3. Print to console (optional)
+                echo '---------------------'
+                echo 'Here is your kubeconfig for .kube/config:'
+                echo '---------------------'
+                cat rke2-for-local.yaml
+                echo '---------------------'
+                """
+                // 4. Archive as artifact so you can download from Jenkins UI
+                archiveArtifacts artifacts: 'rke2-for-local.yaml', onlyIfSuccessful: true
+            }
+        }
+    }
+
 
     }
 }

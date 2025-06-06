@@ -1,3 +1,5 @@
+# terraform/variables.tf
+
 variable "credentials_file" {
     description = "Path to GCP service account key, supplied by Jenkins pipeline"
 }

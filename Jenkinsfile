@@ -60,7 +60,7 @@ pipeline {
                         # Master install
                         gcloud compute ssh mlops-master --command="curl -sfL https://get.rke2.io | sudo sh - && sudo systemctl enable rke2-server && sudo systemctl start rke2-server"
 
-                        sleep 60
+                        sleep 180
 
                         NODE_TOKEN=\$(gcloud compute ssh mlops-master --command='sudo cat /var/lib/rancher/rke2/server/node-token' --quiet)
 

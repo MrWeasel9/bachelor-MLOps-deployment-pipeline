@@ -11,34 +11,29 @@ properties([
 pipeline {
     agent any
 
-    environment {
-        // (No need to set GOOGLE_APPLICATION_CREDENTIALS here; Terraform will read the JSON path directly)
-    }
-
     stages {
         stage('Checkout') {
             steps {
-                // Let Jenkins do the normal SCM checkout (credentials already set under job config)
-                echo "Repository checked out"
+                // Jenkins’s built-in “Declarative: Checkout SCM” already ran, so no git step needed here.
+                echo "Repository checked out by Jenkins."
             }
         }
 
-        // Bind the GCP JSON key into a workspace file. 
-        // “gcp-terraform-key” must match the credential ID you configured in Jenkins.
         stage('Terraform Init & Plan & Apply/Destroy') {
             steps {
+                // Bind the GCP JSON key into a workspace file named by ${GCLOUD_AUTH}
                 withCredentials([file(credentialsId: 'gcp-terraform-key', variable: 'GCLOUD_AUTH')]) {
                     dir('terraform') {
-                        // Initialize Terraform
+                        // 1) Initialize Terraform
                         sh 'terraform init'
 
-                        // Plan, passing the path to the key file
+                        // 2) Plan, passing the path to the key file
                         sh "terraform plan -var=\"credentials_file=${GCLOUD_AUTH}\" -var=\"project=bachelors-project-461620\""
 
-                        // Either Apply or Destroy, based on the boolean parameter
+                        // 3) Conditionally apply or destroy
                         script {
                             if (params.DO_DESTROY) {
-                                input message: "Are you REALLY sure you want to destroy ALL infra?", ok: "Yes, destroy!"
+                                input message: "Are you REALLY sure you want to destroy ALL infrastructure? This cannot be undone!", ok: "Yes, destroy!"
                                 sh "terraform destroy -auto-approve -var=\"credentials_file=${GCLOUD_AUTH}\" -var=\"project=bachelors-project-461620\""
                             } else {
                                 input message: "Deploy new/updated cluster? (This creates/destroys cloud resources!)", ok: "Yes, apply!"

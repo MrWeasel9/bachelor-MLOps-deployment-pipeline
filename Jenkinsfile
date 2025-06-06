@@ -32,42 +32,43 @@ pipeline {
                                 input message: "Deploy new/updated cluster? (This creates/destroys cloud resources!)", ok: "Yes, apply!"
                                 sh "terraform apply -no-color -auto-approve -var=\"credentials_file=${GCLOUD_AUTH}\" -var=\"project=bachelors-project-461620\""
 
-                                // After apply, export the dynamic IPs as env vars for next stage
-                                env.MASTER_IP = sh(script: "terraform output -raw master_internal_ip", returnStdout: true).trim()
-                                env.WORKER1_IP = sh(script: "terraform output -raw worker_1_internal_ip", returnStdout: true).trim()
-                                env.WORKER2_IP = sh(script: "terraform output -raw worker_2_internal_ip", returnStdout: true).trim()
+                                // Get IPs into Groovy variables
+                                MASTER_INTERNAL_IP = sh(script: "terraform output -raw master_internal_ip", returnStdout: true).trim()
+                                WORKER1_INTERNAL_IP = sh(script: "terraform output -raw worker_1_internal_ip", returnStdout: true).trim()
+                                WORKER2_INTERNAL_IP = sh(script: "terraform output -raw worker_2_internal_ip", returnStdout: true).trim()
+                                MASTER_EXTERNAL_IP = sh(script: "terraform output -raw master_external_ip", returnStdout: true).trim()
                             }
                         }
                     }
                 }
             }
         }
-
+        
         stage('Configure RKE2') {
             when {
                 expression { !params.DO_DESTROY }
             }
             steps {
                 withCredentials([file(credentialsId: 'gcp-terraform-key', variable: 'GCLOUD_AUTH')]) {
-                    sh '''
-                        gcloud auth activate-service-account --key-file=$GCLOUD_AUTH
+                    sh """
+                        gcloud auth activate-service-account --key-file=\$GCLOUD_AUTH
                         gcloud config set project bachelors-project-461620
                         gcloud config set compute/zone europe-central2-a
 
-                        # Install RKE2 on master
+                        # Master install
                         gcloud compute ssh mlops-master --command="curl -sfL https://get.rke2.io | sudo sh - && sudo systemctl enable rke2-server && sudo systemctl start rke2-server"
 
                         sleep 60
 
-                        NODE_TOKEN=$(gcloud compute ssh mlops-master --command='sudo cat /var/lib/rancher/rke2/server/node-token' --quiet)
+                        NODE_TOKEN=\$(gcloud compute ssh mlops-master --command='sudo cat /var/lib/rancher/rke2/server/node-token' --quiet)
 
-                        # Use dynamic IPs from previous step
-                        gcloud compute ssh mlops-worker-1 --command="curl -sfL https://get.rke2.io | sudo sh - && sudo mkdir -p /etc/rancher/rke2 && echo -e 'server: https://${MASTER_INTERNAL_IP}:9345\\ntoken: $NODE_TOKEN' | sudo tee /etc/rancher/rke2/config.yaml && sudo systemctl enable rke2-agent && sudo systemctl start rke2-agent"
-
-                        gcloud compute ssh mlops-worker-2 --command="curl -sfL https://get.rke2.io | sudo sh - && sudo mkdir -p /etc/rancher/rke2 && echo -e 'server: https://${MASTER_INTERNAL_IP}:9345\\ntoken: $NODE_TOKEN' | sudo tee /etc/rancher/rke2/config.yaml && sudo systemctl enable rke2-agent && sudo systemctl start rke2-agent"
-                    '''
+                        # Use actual Groovy vars in these lines:
+                        gcloud compute ssh mlops-worker-1 --command="curl -sfL https://get.rke2.io | sudo sh - && sudo mkdir -p /etc/rancher/rke2 && echo -e 'server: https://${MASTER_INTERNAL_IP}:9345\\ntoken: \$NODE_TOKEN' | sudo tee /etc/rancher/rke2/config.yaml && sudo systemctl enable rke2-agent && sudo systemctl start rke2-agent"
+                        gcloud compute ssh mlops-worker-2 --command="curl -sfL https://get.rke2.io | sudo sh - && sudo mkdir -p /etc/rancher/rke2 && echo -e 'server: https://${MASTER_INTERNAL_IP}:9345\\ntoken: \$NODE_TOKEN' | sudo tee /etc/rancher/rke2/config.yaml && sudo systemctl enable rke2-agent && sudo systemctl start rke2-agent"
+                    """
                 }
             }
         }
+
     }
 }

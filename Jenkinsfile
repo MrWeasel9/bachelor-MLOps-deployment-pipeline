@@ -78,7 +78,10 @@ pipeline {
         }
         steps {
             withCredentials([file(credentialsId: 'gcp-terraform-key', variable: 'GCLOUD_AUTH')]) {
-                
+                script {
+                    // Use Groovy variable from previous stage
+                    def masterExternalIP = MASTER_EXTERNAL_IP
+                }
                 sh """
                 gcloud auth activate-service-account --key-file=\$GCLOUD_AUTH
                 gcloud config set project bachelors-project-461620

@@ -14,7 +14,7 @@ pipeline {
     stages {
         stage('Checkout') {
             steps {
-                // Jenkins’s built-in “Declarative: Checkout SCM” already ran, so no git step needed here.
+                // Jenkins’s built-in “Declarative: Checkout SCM” already ran, so no git step is needed here.
                 echo "Repository checked out by Jenkins."
             }
         }
@@ -24,20 +24,20 @@ pipeline {
                 // Bind the GCP JSON key into a workspace file named by ${GCLOUD_AUTH}
                 withCredentials([file(credentialsId: 'gcp-terraform-key', variable: 'GCLOUD_AUTH')]) {
                     dir('terraform') {
-                        // 1) Initialize Terraform
-                        sh 'terraform init'
+                        // 1) Initialize Terraform (no color)
+                        sh 'terraform init -no-color'
 
-                        // 2) Plan, passing the path to the key file
-                        sh "terraform plan -var=\"credentials_file=${GCLOUD_AUTH}\" -var=\"project=bachelors-project-461620\""
+                        // 2) Plan, passing the path to the key file (no color)
+                        sh "terraform plan -no-color -var=\"credentials_file=${GCLOUD_AUTH}\" -var=\"project=bachelors-project-461620\""
 
-                        // 3) Conditionally apply or destroy
+                        // 3) Conditionally apply or destroy (no color)
                         script {
                             if (params.DO_DESTROY) {
                                 input message: "Are you REALLY sure you want to destroy ALL infrastructure? This cannot be undone!", ok: "Yes, destroy!"
-                                sh "terraform destroy -auto-approve -var=\"credentials_file=${GCLOUD_AUTH}\" -var=\"project=bachelors-project-461620\""
+                                sh "terraform destroy -no-color -auto-approve -var=\"credentials_file=${GCLOUD_AUTH}\" -var=\"project=bachelors-project-461620\""
                             } else {
                                 input message: "Deploy new/updated cluster? (This creates/destroys cloud resources!)", ok: "Yes, apply!"
-                                sh "terraform apply -auto-approve -var=\"credentials_file=${GCLOUD_AUTH}\" -var=\"project=bachelors-project-461620\""
+                                sh "terraform apply -no-color -auto-approve -var=\"credentials_file=${GCLOUD_AUTH}\" -var=\"project=bachelors-project-461620\""
                             }
                         }
                     }

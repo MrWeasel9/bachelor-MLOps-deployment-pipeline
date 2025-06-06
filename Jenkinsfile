@@ -73,35 +73,36 @@ pipeline {
         }
 
         stage('Export kubeconfig for Local Use') {
-        when {
-            expression { !params.DO_DESTROY }
-        }
-        steps {
-            withCredentials([file(credentialsId: 'gcp-terraform-key', variable: 'GCLOUD_AUTH')]) {
-                script {
-                    // Use Groovy variable from previous stage
-                    def masterExternalIP = MASTER_EXTERNAL_IP
+            when {
+                expression { !params.DO_DESTROY }
+            }
+            steps {
+                withCredentials([file(credentialsId: 'gcp-terraform-key', variable: 'GCLOUD_AUTH')]) {
+                    sh """
+                        gcloud auth activate-service-account --key-file=\$GCLOUD_AUTH
+                        gcloud config set project bachelors-project-461620
+                        gcloud config set compute/zone europe-central2-a
+
+                        # 1. Copy rke2.yaml from master to /tmp and chown to current user
+                        gcloud compute ssh mlops-master --command='sudo cp /etc/rancher/rke2/rke2.yaml /tmp/rke2.yaml && sudo chown \$(whoami) /tmp/rke2.yaml'
+                        gcloud compute scp mlops-master:/tmp/rke2.yaml ./rke2-raw.yaml
+
+                        # 2. Replace loopback address with the master external IP
+                        sed 's/127.0.0.1/${MASTER_EXTERNAL_IP}/' ./rke2-raw.yaml > rke2-for-local.yaml
+
+                        # 3. Print the resulting config
+                        echo '---------------------'
+                        echo 'Here is your kubeconfig for .kube/config:'
+                        cat rke2-for-local.yaml
+                        echo '---------------------'
+                    """
+
+                    // 4. Archive as artifact so you can download from Jenkins UI
+                    archiveArtifacts artifacts: 'rke2-for-local.yaml', onlyIfSuccessful: true
                 }
-                sh """
-                    gcloud auth activate-service-account --key-file=\$GCLOUD_AUTH
-                    gcloud config set project bachelors-project-461620
-                    gcloud config set compute/zone europe-central2-a
-
-                    # On the master, for example:
-                    gcloud compute ssh mlops-master --command="sudo cp /etc/rancher/rke2/rke2.yaml /tmp/rke2.yaml && sudo chown \$(whoami) /tmp/rke2.yaml"
-                    gcloud compute scp mlops-master:/tmp/rke2.yaml ./rke2-raw.yaml
-
-                    # Replace with master external IP
-                    sed 's/127.0.0.1/${MASTER_EXTERNAL_IP}/' ./rke2-raw.yaml > rke2-for-local.yaml
-
-                    cat rke2-for-local.yaml
-                """
-
-                // 4. Archive as artifact so you can download from Jenkins UI
-                archiveArtifacts artifacts: 'rke2-for-local.yaml', onlyIfSuccessful: true
             }
         }
-    }
+
 
 
     }

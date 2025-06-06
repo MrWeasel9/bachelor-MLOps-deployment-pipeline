@@ -12,45 +12,40 @@ pipeline {
     agent any
 
     environment {
-        GOOGLE_APPLICATION_CREDENTIALS = credentials('gcp-terraform-key')
+        // (No need to set GOOGLE_APPLICATION_CREDENTIALS here; Terraform will read the JSON path directly)
     }
 
     stages {
-        // The built-in “Declarative: Checkout SCM” stage runs automatically,
-        // so there’s no need for a separate ‘git’ step here.
-        stage('Terraform Init') {
+        stage('Checkout') {
             steps {
-                dir('terraform') {
-                    sh 'terraform init'
-                }
+                // Let Jenkins do the normal SCM checkout (credentials already set under job config)
+                echo "Repository checked out"
             }
         }
-        stage('Terraform Plan') {
+
+        // Bind the GCP JSON key into a workspace file. 
+        // “gcp-terraform-key” must match the credential ID you configured in Jenkins.
+        stage('Terraform Init & Plan & Apply/Destroy') {
             steps {
-                dir('terraform') {
-                    sh 'terraform plan'
-                }
-            }
-        }
-        stage('Terraform Apply') {
-            when {
-                expression { return !params.DO_DESTROY }
-            }
-            steps {
-                input "Deploy new cluster? This will create/destroy cloud resources!"
-                dir('terraform') {
-                    sh 'terraform apply -auto-approve'
-                }
-            }
-        }
-        stage('Terraform Destroy') {
-            when {
-                expression { return params.DO_DESTROY }
-            }
-            steps {
-                input "Are you REALLY sure you want to destroy ALL infrastructure? This cannot be undone!"
-                dir('terraform') {
-                    sh 'terraform destroy -auto-approve'
+                withCredentials([file(credentialsId: 'gcp-terraform-key', variable: 'GCLOUD_AUTH')]) {
+                    dir('terraform') {
+                        // Initialize Terraform
+                        sh 'terraform init'
+
+                        // Plan, passing the path to the key file
+                        sh "terraform plan -var=\"credentials_file=${GCLOUD_AUTH}\" -var=\"project=bachelors-project-461620\""
+
+                        // Either Apply or Destroy, based on the boolean parameter
+                        script {
+                            if (params.DO_DESTROY) {
+                                input message: "Are you REALLY sure you want to destroy ALL infra?", ok: "Yes, destroy!"
+                                sh "terraform destroy -auto-approve -var=\"credentials_file=${GCLOUD_AUTH}\" -var=\"project=bachelors-project-461620\""
+                            } else {
+                                input message: "Deploy new/updated cluster? (This creates/destroys cloud resources!)", ok: "Yes, apply!"
+                                sh "terraform apply -auto-approve -var=\"credentials_file=${GCLOUD_AUTH}\" -var=\"project=bachelors-project-461620\""
+                            }
+                        }
+                    }
                 }
             }
         }

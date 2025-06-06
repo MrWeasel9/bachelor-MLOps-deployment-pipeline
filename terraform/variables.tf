@@ -1,4 +1,6 @@
-variable "credentials_file" { default = "jenkins-terraform-key.json" }
+variable "credentials_file" {
+    description = "Path to GCP service account key, supplied by Jenkins pipeline"
+}
 variable "project"         { default = "bachelors-project-461620" }
 variable "region"          { default = "europe-central2" }
 variable "zone"            { default = "europe-central2-a" }

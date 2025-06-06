@@ -57,20 +57,25 @@ pipeline {
                         gcloud config set project bachelors-project-461620
                         gcloud config set compute/zone europe-central2-a
 
-                        # Master install
-                        gcloud compute ssh mlops-master --command="curl -sfL https://get.rke2.io | sudo sh - && sudo systemctl enable rke2-server && sudo systemctl start rke2-server"
+                        # ==== ADDED: Write /etc/rancher/rke2/config.yaml with tls-san for external IP ====
+                        gcloud compute ssh mlops-master --command="echo -e 'tls-san:\\n  - ${MASTER_EXTERNAL_IP}' | sudo tee /etc/rancher/rke2/config.yaml"
 
+                        # ==== Install RKE2 server and start ====
+                        gcloud compute ssh mlops-master --command="curl -sfL https://get.rke2.io | sudo sh - && sudo systemctl enable rke2-server && sudo systemctl restart rke2-server"
+
+                        # Give RKE2 plenty of time to generate new certs and come up!
                         sleep 180
 
                         NODE_TOKEN=\$(gcloud compute ssh mlops-master --command='sudo cat /var/lib/rancher/rke2/server/node-token' --quiet)
 
-                        # Use actual Groovy vars in these lines:
+                        # ==== Install RKE2 agent and join cluster on workers ====
                         gcloud compute ssh mlops-worker-1 --command="curl -sfL https://get.rke2.io | sudo sh - && sudo mkdir -p /etc/rancher/rke2 && echo -e 'server: https://${MASTER_INTERNAL_IP}:9345\\ntoken: \$NODE_TOKEN' | sudo tee /etc/rancher/rke2/config.yaml && sudo systemctl enable rke2-agent && sudo systemctl start rke2-agent"
                         gcloud compute ssh mlops-worker-2 --command="curl -sfL https://get.rke2.io | sudo sh - && sudo mkdir -p /etc/rancher/rke2 && echo -e 'server: https://${MASTER_INTERNAL_IP}:9345\\ntoken: \$NODE_TOKEN' | sudo tee /etc/rancher/rke2/config.yaml && sudo systemctl enable rke2-agent && sudo systemctl start rke2-agent"
                     """
                 }
             }
         }
+
 
         stage('Export kubeconfig for Local Use') {
             when {

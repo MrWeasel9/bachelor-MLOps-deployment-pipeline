@@ -83,24 +83,20 @@ pipeline {
                     def masterExternalIP = MASTER_EXTERNAL_IP
                 }
                 sh """
-                gcloud auth activate-service-account --key-file=\$GCLOUD_AUTH
-                gcloud config set project bachelors-project-461620
-                gcloud config set compute/zone europe-central2-a
+                    gcloud auth activate-service-account --key-file=\$GCLOUD_AUTH
+                    gcloud config set project bachelors-project-461620
+                    gcloud config set compute/zone europe-central2-a
 
-                # 1. Copy kubeconfig from master and make it accessible
-                gcloud compute ssh mlops-master --command='sudo cp /etc/rancher/rke2/rke2.yaml /tmp/rke2.yaml && sudo chown $(whoami) /tmp/rke2.yaml'
-                gcloud compute scp mlops-master:/tmp/rke2.yaml ./rke2-raw.yaml
+                    # On the master, for example:
+                    gcloud compute ssh mlops-master --command="sudo cp /etc/rancher/rke2/rke2.yaml /tmp/rke2.yaml && sudo chown \$(whoami) /tmp/rke2.yaml"
+                    gcloud compute scp mlops-master:/tmp/rke2.yaml ./rke2-raw.yaml
 
-                # 2. Replace server IP for external access
-                sed 's/127.0.0.1/${MASTER_EXTERNAL_IP}/' ./rke2-raw.yaml > rke2-for-local.yaml
+                    # Replace with master external IP
+                    sed 's/127.0.0.1/${MASTER_EXTERNAL_IP}/' ./rke2-raw.yaml > rke2-for-local.yaml
 
-                # 3. Print to console (optional)
-                echo '---------------------'
-                echo 'Here is your kubeconfig for .kube/config:'
-                echo '---------------------'
-                cat rke2-for-local.yaml
-                echo '---------------------'
+                    cat rke2-for-local.yaml
                 """
+
                 // 4. Archive as artifact so you can download from Jenkins UI
                 archiveArtifacts artifacts: 'rke2-for-local.yaml', onlyIfSuccessful: true
             }

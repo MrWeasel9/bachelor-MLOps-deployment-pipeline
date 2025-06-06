@@ -11,10 +11,6 @@ properties([
 pipeline {
     agent any
 
-    environment {
-        // You can add other env vars here if needed
-    }
-
     stages {
         stage('Checkout') {
             steps {

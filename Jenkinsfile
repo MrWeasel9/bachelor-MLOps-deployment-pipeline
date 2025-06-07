@@ -1,5 +1,6 @@
 /**
- * Jenkinsfile – bare-metal GCP + RKE2 + MetalLB + Traefik
+ * Jenkinsfile – GCP bare-metal cluster
+ * DO_DESTROY=true ⇒ only the Terraform-destroy stage runs
  */
 
 properties([
@@ -32,6 +33,7 @@ pipeline {
                               variable: 'GCLOUD_AUTH')]) {
 
           dir('terraform') {
+
             sh 'terraform init -no-color'
             sh """
               terraform plan -no-color \
@@ -47,10 +49,10 @@ pipeline {
                     -var="credentials_file=$GCLOUD_AUTH" \
                     -var="project=${PROJECT}"
                 """
-                currentBuild.result = 'SUCCESS'
-                return
+                return      // nothing else should run
               }
 
+              /* ── apply ───────────────────────────*/
               input message: 'Apply infrastructure changes?', ok: 'Apply!'
               sh """
                 terraform apply -auto-approve -no-color \
@@ -58,9 +60,9 @@ pipeline {
                   -var="project=${PROJECT}"
               """
 
-              sleep 30   // give the VMs a moment to be reachable
+              sleep 30   // give VMs a moment to be reachable
 
-              /* ── capture outputs into env.* for later stages ───────── */
+              /* capture outputs for later stages */
               env.MASTER_INTERNAL_IP = sh(
                 script: "terraform output -raw master_internal_ip",
                 returnStdout: true
@@ -69,14 +71,15 @@ pipeline {
                 script: "terraform output -raw master_external_ip",
                 returnStdout: true
               ).trim()
-            } // script
-          }   // dir
-        }     // withCredentials
+            }
+          }
+        }
       }
     }
 
     /*────────────────────*/
     stage('Install / configure RKE2') {
+      when { expression { !params.DO_DESTROY } }
       steps {
         withCredentials([file(credentialsId: 'gcp-terraform-key',
                               variable: 'GCLOUD_AUTH')]) {
@@ -86,7 +89,7 @@ pipeline {
             gcloud config set project ${PROJECT}
             gcloud config set compute/zone ${ZONE}
 
-            # ── master ─────────────────────────────────────────────
+            # ── master ────────────────────────────────
             gcloud compute ssh mlops-master --command="\
               sudo mkdir -p /etc/rancher/rke2 && \
               echo -e 'tls-san:\\n  - ${env.MASTER_EXTERNAL_IP}' | \
@@ -103,7 +106,7 @@ pipeline {
             NODE_TOKEN=\$(gcloud compute ssh mlops-master \
               --command='sudo cat /var/lib/rancher/rke2/server/node-token' --quiet)
 
-            # ── workers ────────────────────────────────────────────
+            # ── workers ───────────────────────────────
             for n in 1 2; do
               gcloud compute ssh mlops-worker-\${n} --command="\
                 curl -sfL https://get.rke2.io | sudo sh - && \
@@ -120,6 +123,7 @@ pipeline {
 
     /*────────────────────*/
     stage('Fetch kubeconfig for Jenkins + artifact') {
+      when { expression { !params.DO_DESTROY } }
       steps {
         withCredentials([file(credentialsId: 'gcp-terraform-key',
                               variable: 'GCLOUD_AUTH')]) {
@@ -136,21 +140,14 @@ pipeline {
             sed 's/127.0.0.1/${env.MASTER_EXTERNAL_IP}/' rke2-raw.yaml \
               > rke2-for-local.yaml
           """
-
           archiveArtifacts artifacts: 'rke2-for-local.yaml', fingerprint: true
-
-          sh '''
-            mkdir -p ~/.kube
-            cp rke2-for-local.yaml ~/.kube/config
-            kubectl version --short
-            kubectl get nodes -o wide
-          '''
         }
       }
     }
 
     /*────────────────────*/
     stage('Disable bundled nginx-ingress') {
+      when { expression { !params.DO_DESTROY } }
       steps {
         sh '''
           set +e
@@ -166,9 +163,10 @@ pipeline {
 
     /*────────────────────*/
     stage('Install MetalLB + Traefik LoadBalancer') {
+      when { expression { !params.DO_DESTROY } }
       steps {
         sh """
-          # ── patch manifests with the reserved static IP ───────────
+          # ── patch manifests with reserved static IP ───────────────
           sed 's/__MASTER_EXTERNAL_IP__/${env.MASTER_EXTERNAL_IP}/g' \
             services/metallb/ipaddresspool.yaml > ipaddresspool-patched.yaml
 
@@ -184,7 +182,7 @@ pipeline {
 
           kubectl apply -f ipaddresspool-patched.yaml
 
-          # ── Traefik — real LoadBalancer on that IP ───────────────
+          # ── Traefik – real LoadBalancer ──────────────────────────
           helm repo add traefik https://traefik.github.io/charts
           helm repo update
           helm upgrade --install traefik traefik/traefik \
@@ -200,10 +198,14 @@ pipeline {
   /**********************************************************/
   post {
     success {
-      echo "✅ Cluster ready – open http://${env.MASTER_EXTERNAL_IP} (Traefik dashboard)."
+      script {
+        if (params.DO_DESTROY) {
+          echo '✅ Infrastructure destroyed – nothing else to do.'
+        } else {
+          echo "✅ Cluster ready – Traefik dashboard: http://${env.MASTER_EXTERNAL_IP}"
+        }
+      }
     }
-    failure {
-      echo "❌ Build failed – check stage logs."
-    }
+    failure { echo '❌ Build failed – check stage logs.' }
   }
 }

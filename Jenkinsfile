@@ -1,242 +1,156 @@
-/**
- * Jenkinsfile – GCP bare-metal cluster
- * DO_DESTROY=true ⇒ only the Terraform-destroy stage runs
- */
-
 properties([
-  parameters([
-    booleanParam(name: 'DO_DESTROY', defaultValue: false,
-      description: 'Destroy ALL infrastructure (DANGER!)')
-  ])
+    parameters([
+        booleanParam(
+            name: 'DO_DESTROY',
+            defaultValue: false,
+            description: 'Set to true to destroy all infrastructure (DANGER!)'
+        )
+    ])
 ])
 
 pipeline {
-  agent any
+    agent any
 
-  environment {
-    PROJECT = 'bachelors-project-461620'
-    ZONE    = 'europe-central2-a'
-  }
-
-  /**********************************************************/
-  stages {
-
-    /*────────────────────*/
-    stage('Checkout') {
-      steps { checkout scm }
-    }
-
-    /*────────────────────*/
-    stage('Terraform init / plan / apply | destroy') {
-      steps {
-        withCredentials([file(credentialsId: 'gcp-terraform-key',
-                              variable: 'GCLOUD_AUTH')]) {
-
-          dir('terraform') {
-
-            sh 'terraform init -no-color'
-            sh """
-              terraform plan -no-color \
-                -var="credentials_file=$GCLOUD_AUTH" \
-                -var="project=${PROJECT}"
-            """
-
-            script {
-              if (params.DO_DESTROY) {
-                input message: 'REALLY destroy ALL resources?', ok: 'Yes, destroy!'
-                sh """
-                  terraform destroy -auto-approve -no-color \
-                    -var="credentials_file=$GCLOUD_AUTH" \
-                    -var="project=${PROJECT}"
-                """
-                return      // nothing else should run
-              }
-
-              /* ── apply ───────────────────────────*/
-              input message: 'Apply infrastructure changes?', ok: 'Apply!'
-              sh """
-                terraform apply -auto-approve -no-color \
-                  -var="credentials_file=$GCLOUD_AUTH" \
-                  -var="project=${PROJECT}"
-              """
-
-              sleep 5   // give VMs a moment to be reachable
-
-              /* capture outputs for later stages */
-              env.MASTER_INTERNAL_IP = sh(
-                script: "terraform output -raw master_internal_ip",
-                returnStdout: true
-              ).trim()
-              env.MASTER_EXTERNAL_IP = sh(
-                script: "terraform output -raw master_external_ip",
-                returnStdout: true
-              ).trim()
+    stages {
+        stage('Checkout') {
+            steps {
+                echo "Repository checked out by Jenkins."
             }
-          }
         }
-      }
-    }
 
-        /*────────────────────*/
-    /*────────────────────*/
-    stage('Wait for master SSH') {
-      when { expression { !params.DO_DESTROY } }   // skip on destroy
-      steps {
-        withCredentials([file(credentialsId: 'gcp-terraform-key',
-                              variable: 'GCLOUD_AUTH')]) {
-          sh """
-            set -e
-            gcloud auth activate-service-account --key-file=$GCLOUD_AUTH
-            gcloud config set project ${PROJECT}
-            gcloud config set compute/zone ${ZONE}
+        stage('Terraform Init & Plan & Apply/Destroy') {
+            steps {
+                withCredentials([file(credentialsId: 'gcp-terraform-key', variable: 'GCLOUD_AUTH')]) {
+                    dir('terraform') {
+                        sh 'terraform init -no-color'
+                        sh "terraform plan -no-color -var=\"credentials_file=${GCLOUD_AUTH}\" -var=\"project=bachelors-project-461620\""
+                        script {
+                            if (params.DO_DESTROY) {
+                                input message: "Are you REALLY sure you want to destroy ALL infrastructure? This cannot be undone!", ok: "Yes, destroy!"
+                                sh "terraform destroy -no-color -auto-approve -var=\"credentials_file=${GCLOUD_AUTH}\" -var=\"project=bachelors-project-461620\""
+                            } else {
+                                input message: "Deploy new/updated cluster? (This creates/destroys cloud resources!)", ok: "Yes, apply!"
+                                sh "terraform apply -no-color -auto-approve -var=\"credentials_file=${GCLOUD_AUTH}\" -var=\"project=bachelors-project-461620\""
 
-            echo '⏳ Waiting up to 5 minutes for mlops-master (SSH:22) …'
-            for i in {1..15}; do
-              if gcloud compute ssh mlops-master --quiet --command='echo ok' >/dev/null 2>&1; then
-                echo '✔ SSH is up'
-                exit 0
-              fi
-              echo "Attempt \$i/15 failed — retrying in 20 s"
-              sleep 20
-            done
-            echo '❌ Timeout: mlops-master still not accepting SSH after 5 minutes'
-            exit 1
-          """
+                                sleep(time: 30, unit: 'SECONDS')
+
+                                // Get IPs into Groovy variables
+                                MASTER_INTERNAL_IP = sh(script: "terraform output -raw master_internal_ip", returnStdout: true).trim()
+                                WORKER1_INTERNAL_IP = sh(script: "terraform output -raw worker_1_internal_ip", returnStdout: true).trim()
+                                WORKER2_INTERNAL_IP = sh(script: "terraform output -raw worker_2_internal_ip", returnStdout: true).trim()
+                                MASTER_EXTERNAL_IP = sh(script: "terraform output -raw master_external_ip", returnStdout: true).trim()
+                            }
+                        }
+                    }
+                }
+            }
         }
-      }
-    }
+        
+        stage('Configure RKE2') {
+            when {
+                expression { !params.DO_DESTROY }
+            }
+            steps {
+                withCredentials([file(credentialsId: 'gcp-terraform-key', variable: 'GCLOUD_AUTH')]) {
+                    sh """
+                        gcloud auth activate-service-account --key-file=\$GCLOUD_AUTH
+                        gcloud config set project bachelors-project-461620
+                        gcloud config set compute/zone europe-central2-a
 
+                        # Ensure /etc/rancher/rke2 exists before writing config.yaml
+                        gcloud compute ssh mlops-master --command="sudo mkdir -p /etc/rancher/rke2"
+                        gcloud compute ssh mlops-master --command="echo -e 'tls-san:\\n  - ${MASTER_EXTERNAL_IP}' | sudo tee /etc/rancher/rke2/config.yaml"
 
+                        # Master install and restart for cert regeneration
+                        gcloud compute ssh mlops-master --command="curl -sfL https://get.rke2.io | sudo sh - && sudo systemctl enable rke2-server && sudo systemctl restart rke2-server"
 
-    /*────────────────────*/
-    stage('Install / configure RKE2') {
-      when { expression { !params.DO_DESTROY } }
-      steps {
-        withCredentials([file(credentialsId: 'gcp-terraform-key',
-                              variable: 'GCLOUD_AUTH')]) {
-          sh """
-            set -e
-            gcloud auth activate-service-account --key-file=$GCLOUD_AUTH
-            gcloud config set project ${PROJECT}
-            gcloud config set compute/zone ${ZONE}
+                        sleep 180
 
-            # ── master ────────────────────────────────
-            gcloud compute ssh mlops-master --command="\
-              sudo mkdir -p /etc/rancher/rke2 && \
-              echo -e 'tls-san:\\n  - ${env.MASTER_EXTERNAL_IP}' | \
-              sudo tee /etc/rancher/rke2/config.yaml"
+                        NODE_TOKEN=\$(gcloud compute ssh mlops-master --command='sudo cat /var/lib/rancher/rke2/server/node-token' --quiet)
 
-            gcloud compute ssh mlops-master --command="\
-              curl -sfL https://get.rke2.io | sudo sh - && \
-              sudo systemctl enable rke2-server && \
-              sudo systemctl restart rke2-server"
-
-            echo '⏳ Waiting 3 min for RKE2 control-plane…'
-            sleep 180
-
-            NODE_TOKEN=\$(gcloud compute ssh mlops-master \
-              --command='sudo cat /var/lib/rancher/rke2/server/node-token' --quiet)
-
-            # ── workers ───────────────────────────────
-            for n in 1 2; do
-              gcloud compute ssh mlops-worker-\${n} --command="\
-                curl -sfL https://get.rke2.io | sudo sh - && \
-                sudo mkdir -p /etc/rancher/rke2 && \
-                echo -e 'server: https://${env.MASTER_INTERNAL_IP}:9345\\ntoken: \${NODE_TOKEN}' \
-                  | sudo tee /etc/rancher/rke2/config.yaml && \
-                sudo systemctl enable rke2-agent && \
-                sudo systemctl start rke2-agent"
-            done
-          """
+                        gcloud compute ssh mlops-worker-1 --command="curl -sfL https://get.rke2.io | sudo sh - && sudo mkdir -p /etc/rancher/rke2 && echo -e 'server: https://${MASTER_INTERNAL_IP}:9345\\ntoken: \$NODE_TOKEN' | sudo tee /etc/rancher/rke2/config.yaml && sudo systemctl enable rke2-agent && sudo systemctl start rke2-agent"
+                        gcloud compute ssh mlops-worker-2 --command="curl -sfL https://get.rke2.io | sudo sh - && sudo mkdir -p /etc/rancher/rke2 && echo -e 'server: https://${MASTER_INTERNAL_IP}:9345\\ntoken: \$NODE_TOKEN' | sudo tee /etc/rancher/rke2/config.yaml && sudo systemctl enable rke2-agent && sudo systemctl start rke2-agent"
+                    """
+                }
+            }
         }
-      }
-    }
 
-    /*────────────────────*/
-    stage('Fetch kubeconfig for Jenkins + artifact') {
-      when { expression { !params.DO_DESTROY } }
-      steps {
-        withCredentials([file(credentialsId: 'gcp-terraform-key',
-                              variable: 'GCLOUD_AUTH')]) {
-          sh """
-            gcloud auth activate-service-account --key-file=$GCLOUD_AUTH
-            gcloud config set project ${PROJECT}
-            gcloud config set compute/zone ${ZONE}
+        stage('Export kubeconfig for Local Use') {
+            when {
+                expression { !params.DO_DESTROY }
+            }
+            steps {
+                withCredentials([file(credentialsId: 'gcp-terraform-key', variable: 'GCLOUD_AUTH')]) {
+                    sh """
+                        gcloud auth activate-service-account --key-file=\$GCLOUD_AUTH
+                        gcloud config set project bachelors-project-461620
+                        gcloud config set compute/zone europe-central2-a
 
-            gcloud compute ssh mlops-master --command='\
-              sudo cp /etc/rancher/rke2/rke2.yaml /tmp/rke2.yaml && \
-              sudo chown \$(whoami) /tmp/rke2.yaml'
-            gcloud compute scp mlops-master:/tmp/rke2.yaml ./rke2-raw.yaml
+                        # 1. Copy rke2.yaml from master to /tmp and chown to current user
+                        gcloud compute ssh mlops-master --command='sudo cp /etc/rancher/rke2/rke2.yaml /tmp/rke2.yaml && sudo chown \$(whoami) /tmp/rke2.yaml'
+                        gcloud compute scp mlops-master:/tmp/rke2.yaml ./rke2-raw.yaml
 
-            sed 's/127.0.0.1/${env.MASTER_EXTERNAL_IP}/' rke2-raw.yaml \
-              > rke2-for-local.yaml
-          """
-          archiveArtifacts artifacts: 'rke2-for-local.yaml', fingerprint: true
+                        # 2. Replace loopback address with the master external IP
+                        sed 's/127.0.0.1/${MASTER_EXTERNAL_IP}/' ./rke2-raw.yaml > rke2-for-local.yaml
+
+                        # 3. Print the resulting config
+                        echo '---------------------'
+                        echo 'Here is your kubeconfig for .kube/config:'
+                        cat rke2-for-local.yaml
+                        echo '---------------------'
+                    """
+
+                    // 4. Archive as artifact so you can download from Jenkins UI
+                    archiveArtifacts artifacts: 'rke2-for-local.yaml', onlyIfSuccessful: true
+                }
+            }
         }
-      }
-    }
 
-    /*────────────────────*/
-    stage('Disable bundled nginx-ingress') {
-      when { expression { !params.DO_DESTROY } }
-      steps {
-        sh '''
-          set +e
-          gcloud compute ssh mlops-master \
-            --command="sudo mv /var/lib/rancher/rke2/server/manifests/rke2-ingress-nginx.yaml ~" \
-            || true
-          kubectl delete pod -n kube-system \
-            -l app.kubernetes.io/name=ingress-nginx || true
-          helm uninstall rke2-ingress-nginx -n kube-system || true
-        '''
-      }
-    }
+        stage('Configure kubectl context') {
+            steps {
+                sh '''
+                    # Copy kubeconfig to the default location
+                    mkdir -p ~/.kube
+                    cp rke2-for-local.yaml ~/.kube/config
 
-    /*────────────────────*/
-    stage('Install MetalLB + Traefik LoadBalancer') {
-      when { expression { !params.DO_DESTROY } }
-      steps {
-        sh """
-          # ── patch manifests with reserved static IP ───────────────
-          sed 's/__MASTER_EXTERNAL_IP__/${env.MASTER_EXTERNAL_IP}/g' \
-            services/metallb/ipaddresspool.yaml > ipaddresspool-patched.yaml
+                    # Optionally, print out cluster info to confirm access
+                    kubectl version --short
+                    kubectl get nodes -o wide
 
-          sed 's/__MASTER_EXTERNAL_IP__/${env.MASTER_EXTERNAL_IP}/g' \
-            services/traefik/values.yaml        > services/traefik/values.patched.yaml
-
-          # ── MetalLB ───────────────────────────────────────────────
-          helm repo add metallb https://metallb.github.io/metallb
-          helm repo update
-          helm upgrade --install metallb metallb/metallb \
-            --namespace metallb-system --create-namespace \
-            --wait --timeout 5m
-
-          kubectl apply -f ipaddresspool-patched.yaml
-
-          # ── Traefik – real LoadBalancer ──────────────────────────
-          helm repo add traefik https://traefik.github.io/charts
-          helm repo update
-          helm upgrade --install traefik traefik/traefik \
-            --namespace traefik --create-namespace \
-            -f services/traefik/values.patched.yaml \
-            --wait --timeout 5m
-        """
-      }
-    }
-
-  } // stages
-
-  /**********************************************************/
-  post {
-    success {
-      script {
-        if (params.DO_DESTROY) {
-          echo '✅ Infrastructure destroyed – nothing else to do.'
-        } else {
-          echo "✅ Cluster ready – Traefik dashboard: http://${env.MASTER_EXTERNAL_IP}"
+                    kubectl create namespace traefik || true
+                '''
+            }
         }
-      }
+
+        stage('Remove rke2-ingress-nginx') {
+            steps {
+                sh '''
+                # 1. Move the static manifest (prevents re-creation)
+                gcloud compute ssh mlops-master --command="sudo mv /var/lib/rancher/rke2/server/manifests/rke2-ingress-nginx.yaml ~ || true"
+                
+                # 2. Remove existing pods and helm release (cleanup)
+                kubectl delete pod -n kube-system -l app.kubernetes.io/name=ingress-nginx || true
+                helm uninstall rke2-ingress-nginx -n kube-system || true
+                '''
+            }
+        }
+
+        stage('Install Traefik Ingress (NodePort)') {
+            steps {
+                sh '''
+                # 1. Add Traefik Helm repo and update
+                helm repo add traefik https://traefik.github.io/charts
+                helm repo update
+
+                # 2. Install/upgrade Traefik using your NodePort values.yaml
+                helm upgrade --install traefik traefik/traefik \
+                    --namespace traefik --create-namespace \
+                    -f services/traefik/values.yaml
+
+                # 3. Wait for Traefik pod to be ready
+                kubectl rollout status deployment/traefik -n traefik --timeout=120s
+                '''
+            }
+        }
     }
-    failure { echo '❌ Build failed – check stage logs.' }
-  }
 }

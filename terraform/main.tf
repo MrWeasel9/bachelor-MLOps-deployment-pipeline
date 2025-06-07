@@ -133,16 +133,14 @@ resource "google_compute_firewall" "allow_ssh" {
   source_ranges = ["0.0.0.0/0"]
 }
 
-# ────────── MetalLB needs a single /32 route ──────────
-resource "google_compute_route" "metallb_static_ip" {
-  name                    = "metallb-${replace(google_compute_address.mlops_master_external.address, ".", "-")}"
-  network                 = "default"
-  dest_range              = "${google_compute_address.mlops_master_external.address}/32"
-  priority                = 0
-  next_hop_instance       = google_compute_instance.mlops_master.self_link
-  next_hop_instance_zone  = var.zone
-  description             = "Route the VIP to the master NIC so MetalLB can ARP-reply"
+# Traefik NodePort (32255, for HTTP) - can add HTTPS if you want later
+resource "google_compute_firewall" "allow_traefik_nodeport" {
+  name    = "allow-traefik-nodeport"
+  network = "default"
+  allow {
+    protocol = "tcp"
+    ports    = ["32255"]
+  }
+  target_tags   = ["mlops", "master"]
+  source_ranges = ["0.0.0.0/0"]
 }
-
-
-

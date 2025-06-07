@@ -1,5 +1,3 @@
-# services/traefik/values.yaml
-
 dashboard:
   enabled: true
   ingressRoute:
@@ -13,13 +11,13 @@ nodeSelector:
   kubernetes.io/hostname: mlops-master
 
 service:
-  type: LoadBalancer            # ← true LB now
-  loadBalancerIP: __MASTER_EXTERNAL_IP__   # patched by Jenkins
+  type: NodePort           # <---- NodePort instead of LoadBalancer
   ports:
     web:
       port: 80
+      nodePort: 32255      # <---- Make sure this matches your firewall rule
       targetPort: 8000
     websecure:
       port: 443
+      nodePort: 32443      # <---- Add another firewall rule if needed for HTTPS
       targetPort: 8443
-

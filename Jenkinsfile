@@ -158,6 +158,9 @@ pipeline {
                     -f services/traefik/values.yaml \
                 | kubectl apply -f -
 
+                # 3. Delete any orphaned SA from the above apply, so Helm can recreate it
+                kubectl delete serviceaccount traefik -n traefik || true
+
                 # 3. Now install / upgrade Traefik itself
                 helm upgrade --install traefik traefik/traefik \
                     --namespace traefik --create-namespace \

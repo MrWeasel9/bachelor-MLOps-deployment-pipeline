@@ -112,7 +112,7 @@ pipeline {
                 sh '''
                 mkdir -p ~/.kube
                 cp rke2-for-local.yaml ~/.kube/config
-                kubectl version --short
+                kubectl version
                 kubectl get nodes -o wide
                 '''
             }

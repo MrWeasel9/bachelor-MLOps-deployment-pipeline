@@ -153,22 +153,17 @@ pipeline {
                     # 2. Always update repos
                     helm repo update
                     
-                    # 3. Install CRDs first
-                    helm upgrade --install traefik-crds traefik/traefik-crds \
-                        --namespace traefik --create-namespace
+                    # 3. Fetch & apply Traefik’s upstream CRDs (skip if already present)
+                    set +e
+                    kubectl apply -f https://raw.githubusercontent.com/traefik/traefik-helm-chart/v3.4.1/crds/traefik-crds.yaml
+                    set -e
                         
-                    # 4. Wait for CRDs to be ready (using the new group: traefik.io)
-                    kubectl wait --for condition=established crd \
-                        middlewares.traefik.io \
-                        ingressroutes.traefik.io \
-                        --timeout=120s
-                        
-                    # 5. Install main Traefik chart
+                    # 4. Install main Traefik chart
                     helm upgrade --install traefik traefik/traefik \
                         --namespace traefik --create-namespace \
                         -f services/traefik/values.yaml
                         
-                    # 6. Verify installation
+                    # 5. Verify installation
                     kubectl rollout status deployment/traefik -n traefik --timeout=120s
                 '''
             }
@@ -221,6 +216,7 @@ pipeline {
                 }
             }
         }
+
 
 
         

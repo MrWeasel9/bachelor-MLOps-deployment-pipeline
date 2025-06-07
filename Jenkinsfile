@@ -145,23 +145,31 @@ pipeline {
             when { expression { !params.DO_DESTROY } }
             steps {
                 sh '''
-                    helm repo add traefik https://helm.traefik.io/traefik
+                    # 1. Add repo only if not exists
+                    if ! helm repo list | grep -q '^traefik\s'; then
+                        helm repo add traefik https://helm.traefik.io/traefik
+                    fi
+                    
+                    # 2. Always update repos
                     helm repo update
                     
-                    # Install CRDs first
+                    # 3. Install CRDs first
                     helm upgrade --install traefik-crds traefik/traefik-crds \
                         --namespace traefik --create-namespace
                         
-                    # Wait for CRDs to be ready
+                    # 4. Wait for CRDs to be ready
                     kubectl wait --for condition=established crd \
                         middlewares.traefik.containo.us \
                         ingressroutes.traefik.containo.us \
                         --timeout=120s
                         
-                    # Install Traefik with our values
+                    # 5. Install Traefik with our values
                     helm upgrade --install traefik traefik/traefik \
                         --namespace traefik --create-namespace \
-                        -f services/traefik/values.yaml  # <-- Uses updated file
+                        -f services/traefik/values.yaml
+                        
+                    # 6. Verify installation
+                    kubectl rollout status deployment/traefik -n traefik --timeout=120s
                 '''
             }
         }

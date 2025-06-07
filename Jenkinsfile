@@ -152,8 +152,9 @@ pipeline {
                 helm repo update
 
                 # 2. Remove any old Traefik CRDs (so Helm can install them cleanly)
-                kubectl delete crd ingressroutes.traefik.io middlewares.traefik.io || true
-
+                set +e
+                kubectl get crd | grep traefik | awk '{print $1}' | xargs -r kubectl delete crd
+                set -e
                 # 3. Install CRDs chart (cluster-scoped) — ignore “already exists” errors
                 helm upgrade --install traefik-crds traefik/traefik-crds \
                 --namespace traefik --create-namespace

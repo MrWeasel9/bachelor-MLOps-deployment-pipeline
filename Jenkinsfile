@@ -146,7 +146,7 @@ pipeline {
             steps {
                 sh '''
                     # 1. Add repo only if not exists
-                    if ! helm repo list | grep -q '^traefik\s'; then
+                    if ! helm repo list | grep -q '^traefik\\s'; then
                         helm repo add traefik https://helm.traefik.io/traefik
                     fi
                     

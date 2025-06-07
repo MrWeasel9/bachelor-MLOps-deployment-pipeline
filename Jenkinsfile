@@ -161,5 +161,55 @@ pipeline {
                 '''
             }
         }
+
+        stage('Deploy MLOps') {
+            when { expression { !params.DO_DESTROY } }
+            steps {
+                withCredentials([
+                usernamePassword(
+                    credentialsId: 'minio-root-creds',
+                    usernameVariable: 'MINIO_ROOT_USER',
+                    passwordVariable: 'MINIO_ROOT_PASSWORD'
+                ),
+                string(
+                    credentialsId: 'postgres-password',
+                    variable: 'POSTGRES_PASSWORD'
+                )
+                ]) {
+                sh """
+                    # ensure namespace
+                    kubectl create namespace mlops || true
+
+                    # Helm repos
+                    helm repo add bitnami https://charts.bitnami.com/bitnami
+                    helm repo update
+
+                    # 1. MinIO
+                    kubectl -n mlops create secret generic minio-credentials \\
+                    --from-literal=rootUser=\${MINIO_ROOT_USER} \\
+                    --from-literal=rootPassword=\${MINIO_ROOT_PASSWORD} || true
+                    helm upgrade --install minio bitnami/minio \\
+                    --namespace mlops \\
+                    -f services/minio/values.yaml
+                    kubectl apply -f services/minio/ingressroute-minio.yaml
+
+                    # 2. PostgreSQL
+                    helm upgrade --install postgresql bitnami/postgresql \\
+                    --namespace mlops \\
+                    -f services/postgresql/values.yaml
+
+                    # 3. MLflow
+                    kubectl -n mlops create secret generic mlflow-s3 \\
+                    --from-literal=MINIO_ROOT_USER=\${MINIO_ROOT_USER} \\
+                    --from-literal=MINIO_ROOT_PASSWORD=\${MINIO_ROOT_PASSWORD} || true
+                    kubectl apply -f services/mlflow/mlflow.yaml
+                    kubectl apply -f services/mlflow/ingressroute-mlflow.yaml
+                """
+                }
+            }
+        }
+
+
+        
     }
 }

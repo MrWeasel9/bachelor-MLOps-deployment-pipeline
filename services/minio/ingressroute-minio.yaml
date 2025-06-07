@@ -1,0 +1,28 @@
+# services/minio/ingressroute-minio.yaml
+apiVersion: traefik.containo.us/v1alpha1
+kind: Middleware
+metadata:
+  name: strip-minio
+  namespace: mlops
+spec:
+  stripPrefix:
+    prefixes:
+      - /minio
+
+---
+apiVersion: traefik.containo.us/v1alpha1
+kind: IngressRoute
+metadata:
+  name: minio
+  namespace: mlops
+spec:
+  entryPoints:
+    - web
+  routes:
+    - match: PathPrefix(`/minio`)
+      kind: Rule
+      services:
+        - name: minio
+          port: 9001
+      middlewares:
+        - name: strip-minio

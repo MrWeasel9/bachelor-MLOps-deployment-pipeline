@@ -1,0 +1,28 @@
+# services/mlflow/ingressroute-mlflow.yaml
+apiVersion: traefik.containo.us/v1alpha1
+kind: Middleware
+metadata:
+  name: strip-mlflow
+  namespace: mlops
+spec:
+  stripPrefix:
+    prefixes:
+      - /mlflow
+
+---
+apiVersion: traefik.containo.us/v1alpha1
+kind: IngressRoute
+metadata:
+  name: mlflow
+  namespace: mlops
+spec:
+  entryPoints:
+    - web
+  routes:
+    - match: PathPrefix(`/mlflow`)
+      kind: Rule
+      services:
+        - name: mlflow
+          port: 5000
+      middlewares:
+        - name: strip-mlflow

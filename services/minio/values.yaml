@@ -1,0 +1,16 @@
+# services/minio/values.yaml
+rootUser: "${MINIO_ROOT_USER}"
+rootPassword: "${MINIO_ROOT_PASSWORD}"
+
+persistence:
+  enabled: true
+  storageClass: standard
+  size: 10Gi
+
+service:
+  type: ClusterIP
+
+console:
+  enabled: true
+  service:
+    port: 9001

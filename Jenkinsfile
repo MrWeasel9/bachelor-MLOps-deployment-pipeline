@@ -151,9 +151,11 @@ pipeline {
                 helm repo add traefik https://traefik.github.io/charts
                 helm repo update
 
-                # 2. Install CRDs chart (cluster-scoped)
+                # 2. Install CRDs chart (cluster-scoped) — ignore “already exists” errors
+                set +e
                 helm upgrade --install traefik-crds traefik/traefik-crds \
                 --namespace traefik --create-namespace
+                set -e
 
                 # 3. Install main Traefik chart
                 helm upgrade --install traefik traefik/traefik \

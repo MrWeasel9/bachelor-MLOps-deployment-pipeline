@@ -60,7 +60,7 @@ pipeline {
                   -var="project=${PROJECT}"
               """
 
-              sleep 30   // give VMs a moment to be reachable
+              sleep 5   // give VMs a moment to be reachable
 
               /* capture outputs for later stages */
               env.MASTER_INTERNAL_IP = sh(
@@ -76,6 +76,31 @@ pipeline {
         }
       }
     }
+
+        /*────────────────────*/
+    stage('Wait for master SSH') {
+      when { expression { !params.DO_DESTROY } }   // skip on destroy
+      steps {
+        withCredentials([file(credentialsId: 'gcp-terraform-key',
+                              variable: 'GCLOUD_AUTH')]) {
+          script {
+            echo "⏳ Waiting for mlops-master to accept SSH …"
+            retry(15) {                    // 15 × 20 s ≈ 5 min max
+              sh """
+                gcloud auth activate-service-account --key-file=$GCLOUD_AUTH
+                gcloud config set project ${PROJECT}
+                gcloud config set compute/zone ${ZONE}
+
+                # Try a no-op SSH; exit 0 when it succeeds.
+                gcloud compute ssh mlops-master --quiet --command='echo up'
+              """
+              sleep 20
+            }
+          }
+        }
+      }
+    }
+
 
     /*────────────────────*/
     stage('Install / configure RKE2') {

@@ -151,12 +151,16 @@ pipeline {
                 helm repo add traefik https://traefik.github.io/charts
                 helm repo update
 
-                # 2. Install/upgrade Traefik using your NodePort values.yaml
-                helm upgrade --install traefik traefik/traefik \
-                    --namespace traefik --create-namespace \
-                    -f services/traefik/values.yaml
+                # 2. Install CRDs chart (cluster-scoped)
+                helm upgrade --install traefik-crds traefik/traefik-crds \
+                --namespace traefik --create-namespace
 
-                # 3. Wait for Traefik pod to be ready
+                # 3. Install main Traefik chart
+                helm upgrade --install traefik traefik/traefik \
+                --namespace traefik --create-namespace \
+                -f services/traefik/values.yaml
+
+                # 4. Wait for Traefik deployment to be ready
                 kubectl rollout status deployment/traefik -n traefik --timeout=120s
                 '''
             }

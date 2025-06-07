@@ -141,34 +141,30 @@ pipeline {
             }
         }
 
-         stage('Install Traefik Ingress (NodePort)') {
+        stage('Install Traefik Ingress (NodePort)') {
             when { expression { !params.DO_DESTROY } }
             steps {
                 sh '''
-                # 2. Remove _all_ existing Traefik CRDs so Helm can re-import them
-                set +e
-                kubectl get crd | grep traefik | awk '{print $1}' | xargs -r kubectl delete crd
-                set -e
-            
-                # 3. Install CRDs chart (cluster-scoped)
-                helm upgrade --install traefik-crds traefik/traefik-crds \
-                --namespace traefik --create-namespace
-                
-                # 2. Fetch & apply Traefik's official CRDs (ignore errors if they already exist)
-                set +e
-                kubectl apply -f https://raw.githubusercontent.com/traefik/traefik-helm-chart/v3.4.1/crds/traefik-crds.yaml
-                set -e
-
-                # 3. Install main Traefik chart
-                helm upgrade --install traefik traefik/traefik \
-                    --namespace traefik --create-namespace \
-                    -f services/traefik/values.yaml
-
-                # 4. Wait for rollout
-                kubectl rollout status deployment/traefik -n traefik --timeout=120s
+                    helm repo add traefik https://helm.traefik.io/traefik
+                    helm repo update
+                    
+                    # Install CRDs first
+                    helm upgrade --install traefik-crds traefik/traefik-crds \
+                        --namespace traefik --create-namespace
+                        
+                    # Wait for CRDs to be ready
+                    kubectl wait --for condition=established crd \
+                        middlewares.traefik.containo.us \
+                        ingressroutes.traefik.containo.us \
+                        --timeout=120s
+                        
+                    # Install Traefik with our values
+                    helm upgrade --install traefik traefik/traefik \
+                        --namespace traefik --create-namespace \
+                        -f services/traefik/values.yaml  # <-- Uses updated file
                 '''
             }
-            }
+        }
 
 
         stage('Deploy MLOps') {

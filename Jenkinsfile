@@ -107,73 +107,62 @@ pipeline {
         }
 
         stage('Configure kubectl context') {
-            when {
-                  expression { !params.DO_DESTROY }
-              }
+            when { expression { !params.DO_DESTROY } }
             steps {
                 sh '''
-                    # Copy kubeconfig to the default location
-                    mkdir -p ~/.kube
-                    cp rke2-for-local.yaml ~/.kube/config
-
-                    # Optionally, print out cluster info to confirm access
-                    kubectl version
-                    kubectl get nodes -o wide
-
-                    kubectl create namespace traefik || true
+                mkdir -p ~/.kube
+                cp rke2-for-local.yaml ~/.kube/config
+                kubectl version --short
+                kubectl get nodes -o wide
                 '''
             }
-        }
+            }
 
         stage('Remove rke2-ingress-nginx') {
-            when {
-                  expression { !params.DO_DESTROY }
-              }
+            when { expression { !params.DO_DESTROY } }
             steps {
                 sh '''
-                # 1. Move the static manifest (prevents re-creation)
                 gcloud compute ssh mlops-master --command="sudo mv /var/lib/rancher/rke2/server/manifests/rke2-ingress-nginx.yaml ~ || true"
-                
-                # 2. Remove existing pods and helm release (cleanup)
                 kubectl delete pod -n kube-system -l app.kubernetes.io/name=ingress-nginx || true
                 helm uninstall rke2-ingress-nginx -n kube-system || true
                 '''
             }
         }
 
+        /* ----------  TRAEFIK  ---------- */
         stage('Install Traefik Ingress (NodePort)') {
             when { expression { !params.DO_DESTROY } }
             steps {
                 sh '''
-                # 1. Add & update the repo
-                if ! helm repo list | grep -q '^traefik\\s'; then
-                    helm repo add traefik https://helm.traefik.io/traefik
-                fi
+                helm repo add traefik https://helm.traefik.io/traefik || true
                 helm repo update
 
-                # 2. Render CRDs from the chart (they live in charts/traefik/crds) and apply them
-                helm template traefik traefik/traefik \
-                    --namespace traefik \
-                    --include-crds \
-                    -f services/traefik/values.yaml \
-                | kubectl apply -f -
+                # CRDs once
+                helm upgrade --install traefik-crds traefik/traefik-crds \
+                    --namespace traefik --create-namespace \
+                    --wait --timeout 120s
 
-                # 3. Delete any orphaned SA from the above apply, so Helm can recreate it
-                kubectl delete serviceaccount traefik -n traefik || true
-
-                # 3. Now install / upgrade Traefik itself
+                # Main chart (skip CRDs)
                 helm upgrade --install traefik traefik/traefik \
                     --namespace traefik --create-namespace \
-                    -f services/traefik/values.yaml
-
-                # 4. Wait for it
-                kubectl rollout status deployment/traefik -n traefik --timeout=120s
+                    --skip-crds \
+                    -f services/traefik/values.yaml \
+                    --wait --timeout 120s
                 '''
             }
+        }
+
+        /* ----------  STORAGE  ---------- */
+        stage('Install local-path provisioner') {
+            when { expression { !params.DO_DESTROY } }
+            steps {
+                sh '''
+                kubectl apply -f services/storage/local-path-provisioner.yaml
+                '''
             }
+        }
 
-
-
+        /* ----------  MLOps STACK  ---------- */
         stage('Deploy MLOps') {
             when { expression { !params.DO_DESTROY } }
             steps {
@@ -189,31 +178,28 @@ pipeline {
                 )
                 ]) {
                 sh """
-                    # ensure namespace
+                    # namespace & secrets
                     kubectl create namespace mlops || true
+                    kubectl -n mlops create secret generic minio-credentials \
+                    --from-literal=rootUser=\${MINIO_ROOT_USER} \
+                    --from-literal=rootPassword=\${MINIO_ROOT_PASSWORD} || true
 
-                    # Helm repos
+                    # Repos
                     helm repo add bitnami https://charts.bitnami.com/bitnami
                     helm repo update
 
-                    # 1. MinIO
-                    kubectl -n mlops create secret generic minio-credentials \\
-                    --from-literal=rootUser=\${MINIO_ROOT_USER} \\
-                    --from-literal=rootPassword=\${MINIO_ROOT_PASSWORD} || true
-                    helm upgrade --install minio bitnami/minio \\
-                    --namespace mlops \\
+                    # MinIO
+                    helm upgrade --install minio bitnami/minio \
+                    --namespace mlops \
                     -f services/minio/values.yaml
                     kubectl apply -f services/minio/ingressroute-minio.yaml
 
-                    # 2. PostgreSQL
-                    helm upgrade --install postgresql bitnami/postgresql \\
-                    --namespace mlops \\
+                    # PostgreSQL
+                    helm upgrade --install postgresql bitnami/postgresql \
+                    --namespace mlops \
                     -f services/postgresql/values.yaml
 
-                    # 3. MLflow
-                    kubectl -n mlops create secret generic mlflow-s3 \\
-                    --from-literal=MINIO_ROOT_USER=\${MINIO_ROOT_USER} \\
-                    --from-literal=MINIO_ROOT_PASSWORD=\${MINIO_ROOT_PASSWORD} || true
+                    # MLflow
                     kubectl apply -f services/mlflow/mlflow.yaml
                     kubectl apply -f services/mlflow/ingressroute-mlflow.yaml
                 """

@@ -1,13 +1,12 @@
-# services/postgresql/values.yaml
 primary:
+  postgresqlUsername: mlflow
+  postgresqlPassword: "${POSTGRES_PASSWORD}"
+  postgresqlDatabase: mlflow
+
   persistence:
     enabled: true
-    storageClass: standard
+    storageClass: local-path
     size: 10Gi
-
-  postgresqlUsername: mlflow
-  postgresqlDatabase: mlflow
-  postgresqlPassword: "${POSTGRES_PASSWORD}"
 
 service:
   type: ClusterIP

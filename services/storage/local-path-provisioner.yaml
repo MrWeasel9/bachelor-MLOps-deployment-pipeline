@@ -1,0 +1,14 @@
+# One-liner from Rancher – gives you a default StorageClass
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: local-path-provisioner
+  namespace: kube-system
+---
+# patch to mark it default
+apiVersion: storage.k8s.io/v1
+kind: StorageClass
+metadata:
+  name: local-path
+  annotations:
+    storageclass.kubernetes.io/is-default-class: "true"

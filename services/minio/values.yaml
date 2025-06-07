@@ -1,10 +1,10 @@
-# services/minio/values.yaml
 rootUser: "${MINIO_ROOT_USER}"
 rootPassword: "${MINIO_ROOT_PASSWORD}"
 
+# persistence on the new default local-path StorageClass
 persistence:
   enabled: true
-  storageClass: standard
+  storageClass: local-path
   size: 10Gi
 
 service:

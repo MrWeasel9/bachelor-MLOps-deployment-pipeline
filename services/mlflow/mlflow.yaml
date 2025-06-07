@@ -1,4 +1,3 @@
-# services/mlflow/mlflow.yaml
 apiVersion: v1
 kind: Service
 metadata:
@@ -11,7 +10,6 @@ spec:
   ports:
     - port: 5000
       targetPort: 5000
-
 ---
 apiVersion: apps/v1
 kind: Deployment
@@ -30,7 +28,8 @@ spec:
     spec:
       containers:
         - name: mlflow
-          image: mlflow/mlflow:latest
+          image: mlflow/mlflow:2.12.2     # fixed tag
+          imagePullPolicy: IfNotPresent
           args:
             - server
             - --host
@@ -41,14 +40,6 @@ spec:
             - s3://minio/mlflow-artifacts
           ports:
             - containerPort: 5000
-          env:
-            - name: MINIO_ROOT_USER
-              valueFrom:
-                secretKeyRef:
-                  name: minio-credentials
-                  key: rootUser
-            - name: MINIO_ROOT_PASSWORD
-              valueFrom:
-                secretKeyRef:
-                  name: minio-credentials
-                  key: rootPassword
+          envFrom:
+            - secretRef:
+                name: minio-credentials

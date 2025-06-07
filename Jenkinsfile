@@ -114,7 +114,7 @@ pipeline {
                     cp rke2-for-local.yaml ~/.kube/config
 
                     # Optionally, print out cluster info to confirm access
-                    kubectl version --short
+                    kubectl version
                     kubectl get nodes -o wide
 
                     kubectl create namespace traefik || true

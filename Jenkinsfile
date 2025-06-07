@@ -107,6 +107,9 @@ pipeline {
         }
 
         stage('Configure kubectl context') {
+            when {
+                  expression { !params.DO_DESTROY }
+              }
             steps {
                 sh '''
                     # Copy kubeconfig to the default location
@@ -123,6 +126,9 @@ pipeline {
         }
 
         stage('Remove rke2-ingress-nginx') {
+            when {
+                  expression { !params.DO_DESTROY }
+              }
             steps {
                 sh '''
                 # 1. Move the static manifest (prevents re-creation)
@@ -136,6 +142,9 @@ pipeline {
         }
 
         stage('Install Traefik Ingress (NodePort)') {
+            when {
+                expression { !params.DO_DESTROY }
+            }
             steps {
                 sh '''
                 # 1. Add Traefik Helm repo and update

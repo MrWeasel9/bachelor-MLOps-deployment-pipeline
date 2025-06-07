@@ -153,19 +153,19 @@ pipeline {
                     # 2. Always update repos
                     helm repo update
                     
-                    # 3. Fetch & apply Traefik’s upstream CRDs (skip if already present)
+                    # 3. Apply upstream CRDs (skip “already exists” errors)
                     set +e
                     kubectl apply -f https://raw.githubusercontent.com/traefik/traefik/v3.4/docs/content/reference/dynamic-configuration/kubernetes-crd-definition-v1.yml
                     set -e
-                        
-                    # 4. Install main Traefik chart
+
+                    # 4. Install/upgrade Traefik chart
                     helm upgrade --install traefik traefik/traefik \
                         --namespace traefik --create-namespace \
                         -f services/traefik/values.yaml
-                        
-                    # 5. Verify installation
+
+                    # 5. Wait for rollout…
                     kubectl rollout status deployment/traefik -n traefik --timeout=120s
-                '''
+                    '''
             }
         }
 

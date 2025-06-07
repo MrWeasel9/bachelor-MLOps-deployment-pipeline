@@ -1,0 +1,15 @@
+apiVersion: metallb.io/v1beta1
+kind: IPAddressPool
+metadata:
+  name: traefik-pool
+  namespace: metallb-system
+spec:
+  addresses:
+  - __MASTER_EXTERNAL_IP__/32     # Jenkins patches this
+  autoAssign: false
+---
+apiVersion: metallb.io/v1beta1
+kind: L2Advertisement
+metadata:
+  name: l2adv
+  namespace: metallb-system

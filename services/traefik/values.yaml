@@ -1,0 +1,25 @@
+# services/traefik/values.yaml
+
+dashboard:
+  enabled: true
+  ingressRoute:
+    enabled: true
+
+metrics:
+  prometheus:
+    enabled: true
+
+nodeSelector:
+  kubernetes.io/hostname: mlops-master
+
+service:
+  type: LoadBalancer            # ← true LB now
+  loadBalancerIP: __MASTER_EXTERNAL_IP__   # patched by Jenkins
+  ports:
+    web:
+      port: 80
+      targetPort: 8000
+    websecure:
+      port: 443
+      targetPort: 8443
+

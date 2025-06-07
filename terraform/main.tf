@@ -109,75 +109,40 @@ resource "google_compute_instance" "mlops_worker_2" {
 
 # === FIREWALL RULES ===
 
-# Open Kubernetes API server port to the world (change source_ranges for security later!)
+# Kubernetes API server port
 resource "google_compute_firewall" "allow_k8s_api" {
   name    = "allow-k8s-api"
-  network = "default"  # Change if you use a custom VPC
-
+  network = "default"
   allow {
     protocol = "tcp"
     ports    = ["6443"]
   }
-
   target_tags   = ["master"]
   source_ranges = ["0.0.0.0/0"]
 }
 
-# Allow SSH (22) from anywhere (if not already defined; consider restricting later)
+# SSH (22) from anywhere (restrict later!)
 resource "google_compute_firewall" "allow_ssh" {
   name    = "allow-ssh"
   network = "default"
-
   allow {
     protocol = "tcp"
     ports    = ["22"]
   }
-
   target_tags   = ["mlops", "master", "worker"]
   source_ranges = ["0.0.0.0/0"]
 }
 
-# === Ports for MLflow, MinIO, JupyterHub, etc. ===
-
-# MLflow (5000)
-resource "google_compute_firewall" "allow_mlflow" {
-  name    = "allow-mlflow"
-  network = "default"
-
-  allow {
-    protocol = "tcp"
-    ports    = ["5000"]
-  }
-
-  target_tags   = ["master"]
-  source_ranges = ["0.0.0.0/0"]
+# ────────── MetalLB needs a single /32 route ──────────
+resource "google_compute_route" "metallb_static_ip" {
+  name                    = "metallb-${replace(google_compute_address.mlops_master_external.address, ".", "-")}"
+  network                 = "default"
+  dest_range              = "${google_compute_address.mlops_master_external.address}/32"
+  priority                = 0
+  next_hop_instance       = google_compute_instance.mlops_master.self_link
+  next_hop_instance_zone  = var.zone
+  description             = "Route the VIP to the master NIC so MetalLB can ARP-reply"
 }
 
-# MinIO API (9000) and Console (9001)
-resource "google_compute_firewall" "allow_minio" {
-  name    = "allow-minio"
-  network = "default"
 
-  allow {
-    protocol = "tcp"
-    ports    = ["9000", "9001"]
-  }
-
-  target_tags   = ["master"]
-  source_ranges = ["0.0.0.0/0"]
-}
-
-# JupyterHub (8000)
-resource "google_compute_firewall" "allow_jupyterhub" {
-  name    = "allow-jupyterhub"
-  network = "default"
-
-  allow {
-    protocol = "tcp"
-    ports    = ["8000"]
-  }
-
-  target_tags   = ["master"]
-  source_ranges = ["0.0.0.0/0"]
-}
 

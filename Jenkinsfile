@@ -141,34 +141,35 @@ pipeline {
             }
         }
 
-        stage('Install Traefik Ingress (NodePort)') {
-            when {
-                expression { !params.DO_DESTROY }
-            }
+         stage('Install Traefik Ingress (NodePort)') {
+            when { expression { !params.DO_DESTROY } }
             steps {
                 sh '''
-                # 1. Add Traefik Helm repo and update
-                helm repo add traefik https://traefik.github.io/charts
-                helm repo update
-
-                # 2. Remove any old Traefik CRDs (so Helm can install them cleanly)
+                # 2. Remove _all_ existing Traefik CRDs so Helm can re-import them
                 set +e
                 kubectl get crd | grep traefik | awk '{print $1}' | xargs -r kubectl delete crd
                 set -e
-                # 3. Install CRDs chart (cluster-scoped) — ignore “already exists” errors
+            
+                # 3. Install CRDs chart (cluster-scoped)
                 helm upgrade --install traefik-crds traefik/traefik-crds \
                 --namespace traefik --create-namespace
+                
+                # 2. Fetch & apply Traefik's official CRDs (ignore errors if they already exist)
+                set +e
+                kubectl apply -f https://raw.githubusercontent.com/traefik/traefik-helm-chart/v3.4.1/crds/traefik-crds.yaml
+                set -e
 
                 # 3. Install main Traefik chart
                 helm upgrade --install traefik traefik/traefik \
-                --namespace traefik --create-namespace \
-                -f services/traefik/values.yaml
+                    --namespace traefik --create-namespace \
+                    -f services/traefik/values.yaml
 
-                # 4. Wait for Traefik deployment to be ready
+                # 4. Wait for rollout
                 kubectl rollout status deployment/traefik -n traefik --timeout=120s
                 '''
             }
-        }
+            }
+
 
         stage('Deploy MLOps') {
             when { expression { !params.DO_DESTROY } }

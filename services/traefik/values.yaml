@@ -11,13 +11,13 @@ nodeSelector:
   kubernetes.io/hostname: mlops-master
 
 service:
-  type: NodePort           # <---- NodePort instead of LoadBalancer
+  type: NodePort
   ports:
     web:
       port: 80
-      nodePort: 32255      # <---- Make sure this matches your firewall rule
       targetPort: 8000
+      nodePort: 32255
     websecure:
       port: 443
-      nodePort: 32443      # <---- Add another firewall rule if needed for HTTPS
       targetPort: 8443
+      nodePort: 30594

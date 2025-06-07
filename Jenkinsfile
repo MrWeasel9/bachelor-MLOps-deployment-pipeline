@@ -145,31 +145,30 @@ pipeline {
             when { expression { !params.DO_DESTROY } }
             steps {
                 sh '''
-                    # 1. Add repo only if not exists
-                    if ! helm repo list | grep -q '^traefik\\s'; then
-                        helm repo add traefik https://helm.traefik.io/traefik
-                    fi
-                    
-                    # 2. Always update repos
-                    helm repo update
-                    
-                    # 3. Apply upstream CRDs (skip “already exists” errors)
-                    set +e
-                    kubectl apply -f https://raw.githubusercontent.com/traefik/traefik/v3.4/docs/content/reference/dynamic-configuration/kubernetes-crd-definition-v1.yml
-                    set -e
+                # 1. Add & update the repo
+                if ! helm repo list | grep -q '^traefik\\s'; then
+                    helm repo add traefik https://helm.traefik.io/traefik
+                fi
+                helm repo update
 
-                    helm template traefik-crds traefik/traefik-crds --namespace traefik | kubectl apply -f -
-                    
-                    # 4. Install/upgrade Traefik chart
-                    helm upgrade --install traefik traefik/traefik \
-                        --namespace traefik --create-namespace \
-                        -f services/traefik/values.yaml
+                # 2. Render CRDs from the chart (they live in charts/traefik/crds) and apply them
+                helm template traefik traefik/traefik \
+                    --namespace traefik \
+                    --include-crds \
+                    -f services/traefik/values.yaml \
+                | kubectl apply -f -
 
-                    # 5. Wait for rollout…
-                    kubectl rollout status deployment/traefik -n traefik --timeout=120s
-                    '''
+                # 3. Now install / upgrade Traefik itself
+                helm upgrade --install traefik traefik/traefik \
+                    --namespace traefik --create-namespace \
+                    -f services/traefik/values.yaml
+
+                # 4. Wait for it
+                kubectl rollout status deployment/traefik -n traefik --timeout=120s
+                '''
             }
-        }
+            }
+
 
 
         stage('Deploy MLOps') {

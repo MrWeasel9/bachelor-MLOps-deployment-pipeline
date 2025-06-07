@@ -155,7 +155,7 @@ pipeline {
                     
                     # 3. Fetch & apply Traefik’s upstream CRDs (skip if already present)
                     set +e
-                    kubectl apply -f https://raw.githubusercontent.com/traefik/traefik-helm-chart/v3.4.1/crds/traefik-crds.yaml
+                    kubectl apply -f https://raw.githubusercontent.com/traefik/traefik/v3.4/docs/content/reference/dynamic-configuration/kubernetes-crd-definition-v1.yml
                     set -e
                         
                     # 4. Install main Traefik chart

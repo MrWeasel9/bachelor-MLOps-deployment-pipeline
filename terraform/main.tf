@@ -121,6 +121,19 @@ resource "google_compute_firewall" "allow_k8s_api" {
   source_ranges = ["0.0.0.0/0"]
 }
 
+resource "google_compute_firewall" "allow_rke2_server" {
+  name    = "allow-rke2-server"
+  network = "default"
+  allow {
+    protocol = "tcp"
+    ports    = ["9345"]
+  }
+  # Best practice: Restrict to internal communication only
+  source_ranges = ["10.0.0.0/8"] # or your actual GCP subnet, e.g., ["10.186.0.0/16"]
+  target_tags   = ["master"]
+}
+
+
 # SSH (22) from anywhere (restrict later!)
 resource "google_compute_firewall" "allow_ssh" {
   name    = "allow-ssh"

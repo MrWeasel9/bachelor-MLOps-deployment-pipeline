@@ -78,28 +78,34 @@ pipeline {
     }
 
         /*────────────────────*/
+    /*────────────────────*/
     stage('Wait for master SSH') {
       when { expression { !params.DO_DESTROY } }   // skip on destroy
       steps {
         withCredentials([file(credentialsId: 'gcp-terraform-key',
                               variable: 'GCLOUD_AUTH')]) {
-          script {
-            echo "⏳ Waiting for mlops-master to accept SSH …"
-            retry(15) {                    // 15 × 20 s ≈ 5 min max
-              sh """
-                gcloud auth activate-service-account --key-file=$GCLOUD_AUTH
-                gcloud config set project ${PROJECT}
-                gcloud config set compute/zone ${ZONE}
+          sh """
+            set -e
+            gcloud auth activate-service-account --key-file=$GCLOUD_AUTH
+            gcloud config set project ${PROJECT}
+            gcloud config set compute/zone ${ZONE}
 
-                # Try a no-op SSH; exit 0 when it succeeds.
-                gcloud compute ssh mlops-master --quiet --command='echo up'
-              """
+            echo '⏳ Waiting up to 5 minutes for mlops-master (SSH:22) …'
+            for i in {1..15}; do
+              if gcloud compute ssh mlops-master --quiet --command='echo ok' >/dev/null 2>&1; then
+                echo '✔ SSH is up'
+                exit 0
+              fi
+              echo "Attempt \$i/15 failed — retrying in 20 s"
               sleep 20
-            }
-          }
+            done
+            echo '❌ Timeout: mlops-master still not accepting SSH after 5 minutes'
+            exit 1
+          """
         }
       }
     }
+
 
 
     /*────────────────────*/

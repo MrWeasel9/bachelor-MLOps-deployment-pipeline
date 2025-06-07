@@ -158,6 +158,8 @@ pipeline {
                     kubectl apply -f https://raw.githubusercontent.com/traefik/traefik/v3.4/docs/content/reference/dynamic-configuration/kubernetes-crd-definition-v1.yml
                     set -e
 
+                    helm template traefik-crds traefik/traefik-crds --namespace traefik | kubectl apply -f -
+                    
                     # 4. Install/upgrade Traefik chart
                     helm upgrade --install traefik traefik/traefik \
                         --namespace traefik --create-namespace \

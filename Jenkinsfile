@@ -157,13 +157,13 @@ pipeline {
                     helm upgrade --install traefik-crds traefik/traefik-crds \
                         --namespace traefik --create-namespace
                         
-                    # 4. Wait for CRDs to be ready
+                    # 4. Wait for CRDs to be ready (using the new group: traefik.io)
                     kubectl wait --for condition=established crd \
-                        middlewares.traefik.containo.us \
-                        ingressroutes.traefik.containo.us \
+                        middlewares.traefik.io \
+                        ingressroutes.traefik.io \
                         --timeout=120s
                         
-                    # 5. Install Traefik with our values
+                    # 5. Install main Traefik chart
                     helm upgrade --install traefik traefik/traefik \
                         --namespace traefik --create-namespace \
                         -f services/traefik/values.yaml

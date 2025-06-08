@@ -8,8 +8,8 @@ spec:
   selector:
     app: mlflow
   ports:
-    - port: 5000
-      targetPort: 5000
+  - port: 5000
+    targetPort: 5000
 ---
 apiVersion: apps/v1
 kind: Deployment
@@ -27,19 +27,26 @@ spec:
         app: mlflow
     spec:
       containers:
-        - name: mlflow
-          image: mlflow/mlflow:2.12.2     # fixed tag
-          imagePullPolicy: IfNotPresent
-          args:
-            - server
-            - --host
-            - "0.0.0.0"
-            - --backend-store-uri
-            - postgresql://mlflow:${POSTGRES_PASSWORD}@postgresql.mlops.svc.cluster.local:5432/mlflow
-            - --default-artifact-root
-            - s3://minio/mlflow-artifacts
-          ports:
-            - containerPort: 5000
-          envFrom:
-            - secretRef:
-                name: minio-credentials
+      - name: mlflow
+        image: bitnami/mlflow:2.22.0-debian-12-r5
+        imagePullPolicy: IfNotPresent
+        command:
+          - sh
+          - -c
+          - |
+            mlflow server \
+              --host 0.0.0.0 \
+              --port 5000 \
+              --backend-store-uri "postgresql://postgres:${POSTGRES_PASSWORD}@postgresql:5432/mlflow" \
+              --default-artifact-root "s3://minio/mlflow-artifacts"
+        ports:
+        - containerPort: 5000
+        env:
+        - name: POSTGRES_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: postgresql
+              key: postgres-password
+        envFrom:
+        - secretRef:
+            name: minio-credentials

@@ -1,6 +1,7 @@
 primary:
+  # Exactly the user & DB that MLflow will use
   postgresqlUsername: mlflow
-  postgresqlPassword: "${POSTGRES_PASSWORD}"
+  postgresqlPassword: student
   postgresqlDatabase: mlflow
 
   persistence:
@@ -10,3 +11,4 @@ primary:
 
 service:
   type: ClusterIP
+  

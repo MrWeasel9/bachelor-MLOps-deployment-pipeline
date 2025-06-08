@@ -199,10 +199,12 @@ pipeline {
                     -f services/minio/values.yaml
                     kubectl apply -f services/minio/ingressroute-minio.yaml
 
-                    # PostgreSQL
+                    # PostgreSQL - Use postgres superuser with Jenkins password
                     helm upgrade --install postgresql bitnami/postgresql \
                     --namespace mlops \
-                    -f services/postgresql/values.yaml
+                    -f services/postgresql/values.yaml \
+                    --set auth.postgresPassword=\${POSTGRES_PASSWORD} \
+                    --set auth.database=mlflow
 
                     # MLflow
                     kubectl apply -f services/mlflow/mlflow.yaml

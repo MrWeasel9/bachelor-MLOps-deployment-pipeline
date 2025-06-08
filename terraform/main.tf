@@ -157,3 +157,14 @@ resource "google_compute_firewall" "allow_traefik_nodeport" {
   target_tags   = ["mlops", "master"]
   source_ranges = ["0.0.0.0/0"]
 }
+
+resource "google_compute_firewall" "allow_vxlan" {
+  name    = "allow-vxlan-8472"
+  network = "default"
+  allow {
+    protocol = "udp"
+    ports    = ["8472"]
+  }
+  target_tags   = ["mlops", "master", "worker"]
+  source_ranges = ["10.0.0.0/8"] # or more restrictive, e.g., your actual subnet
+}

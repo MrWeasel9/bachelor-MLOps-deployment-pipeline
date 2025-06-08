@@ -125,6 +125,10 @@ pipeline {
                 gcloud compute ssh mlops-master --command="sudo mv /var/lib/rancher/rke2/server/manifests/rke2-ingress-nginx.yaml ~ || true"
                 kubectl delete pod -n kube-system -l app.kubernetes.io/name=ingress-nginx || true
                 helm uninstall rke2-ingress-nginx -n kube-system || true
+
+                gcloud compute ssh mlops-master --command="sudo iptables -I INPUT -p udp --dport 8472 -j ACCEPT && sudo iptables -I FORWARD -p udp --dport 8472 -j ACCEPT"
+                gcloud compute ssh mlops-worker-1 --command="sudo iptables -I INPUT -p udp --dport 8472 -j ACCEPT && sudo iptables -I FORWARD -p udp --dport 8472 -j ACCEPT"
+                gcloud compute ssh mlops-worker-2 --command="sudo iptables -I INPUT -p udp --dport 8472 -j ACCEPT && sudo iptables -I FORWARD -p udp --dport 8472 -j ACCEPT"
                 '''
             }
         }

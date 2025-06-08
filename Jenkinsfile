@@ -153,14 +153,19 @@ pipeline {
         }
 
         /* ----------  STORAGE  ---------- */
-        stage('Install local-path provisioner') {
+        stage('Install local-path provisioner (v0.0.31)') {
             when { expression { !params.DO_DESTROY } }
             steps {
                 sh '''
-                kubectl apply -f services/storage/local-path-provisioner.yaml
+                # Always pull the authoritative manifest
+                kubectl apply -f https://raw.githubusercontent.com/rancher/local-path-provisioner/v0.0.31/deploy/local-path-storage.yaml
+
+                # Wait until the pod is ready
+                kubectl -n local-path-storage rollout status deploy/local-path-provisioner --timeout=120s
                 '''
             }
-        }
+            }
+
 
         /* ----------  MLOps STACK  ---------- */
         stage('Deploy MLOps') {

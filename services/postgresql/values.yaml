@@ -1,7 +1,5 @@
 primary:
   # Exactly the user & DB that MLflow will use
-  postgresqlUsername: mlflow
-  postgresqlPassword: student
   postgresqlDatabase: mlflow
 
   persistence:

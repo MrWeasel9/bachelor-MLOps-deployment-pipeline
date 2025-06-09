@@ -207,8 +207,11 @@ pipeline {
                     helm upgrade --install postgresql bitnami/postgresql \
                     --namespace mlops \
                     -f services/postgresql/values.yaml \
-                    --set auth.postgresPassword=\${POSTGRES_PASSWORD} \
+                    --set auth.postgresPassword=${POSTGRES_PASSWORD} \
+                    --set auth.username=mlflow \
+                    --set auth.password=${POSTGRES_PASSWORD} \
                     --set auth.database=mlflow
+
 
                     # MLflow
                     kubectl apply -f services/mlflow/mlflow.yaml

@@ -1,0 +1,19 @@
+# This is a template for the KServe InferenceService.
+# The pipeline will replace <DOCKER_IMAGE_NAME> with the newly built image tag.
+apiVersion: "serving.kserve.io/v1beta1"
+kind: "InferenceService"
+metadata:
+  name: "mlflow-wine-classifier"
+  namespace: "mlops"
+spec:
+  predictor:
+    containers:
+      - name: "mlflow-wine-classifier"
+        # This image URL is a placeholder.
+        image: "<DOCKER_IMAGE_NAME>"
+        ports:
+          - containerPort: 8080
+            protocol: TCP
+        env:
+          - name: PROTOCOL
+            value: "v2"

@@ -321,6 +321,7 @@ pipeline {
             }
         }
         
+
         // --- THIS IS THE NEW AUTOMATED CI/CD STAGE FOR MODELS ---
         stage('Train, Build, and Deploy Model') {
             when { expression { params.DEPLOY_NEW_MODEL } }
@@ -343,17 +344,23 @@ pipeline {
                         echo "--- Fetching new run ID from training logs ---"
                         def trainingPodName = sh(script: "kubectl get pods -n mlops -l job-name=model-training-job -o jsonpath='{.items[0].metadata.name}'", returnStdout: true).trim()
                         def logs = sh(script: "kubectl logs ${trainingPodName} -n mlops", returnStdout: true)
-                        def newRunId = (logs =~ /runs\/([a-zA-Z0-9]+)\/model/).matcher[0][1]
+                        
+                        def newRunId
+                        def runIdMatcher = (logs =~ /runs\/([a-f0-9]{32})/)
+                        if (runIdMatcher.find()) {
+                            newRunId = runIdMatcher.group(1)
+                        } else {
+                            error "Could not find a valid Run ID in the training logs."
+                        }
                         echo "Found new Run ID: ${newRunId}"
 
                         // --- 2. Build Image ---
                         echo "--- Starting model builder job for Run ID: ${newRunId} ---"
-                        // Create a temporary manifest with the correct run ID and credentials
                         def builderManifest = readFile('services/training/builder-job.yaml')
-                        builderManifest = builderManifest.replace('value: "placeholder"', "value: \"${newRunId}\"")
-                        builderManifest = builderManifest.replace('DOCKER_IMAGE_NAME', DOCKER_IMAGE_NAME)
-                        builderManifest = builderManifest.replace('DOCKER_USERNAME', DOCKER_USERNAME)
-                        builderManifest = builderManifest.replace('DOCKER_PASSWORD', DOCKER_PASSWORD)
+                        builderManifest = builderManifest.replace('value: "placeholder"', "value: \\\"${newRunId}\\\"") 
+                        builderManifest = builderManifest.replace('${DOCKER_IMAGE_NAME}', DOCKER_IMAGE_NAME)
+                        builderManifest = builderManifest.replace('${DOCKER_USERNAME}', DOCKER_USERNAME)
+                        builderManifest = builderManifest.replace('${DOCKER_PASSWORD}', DOCKER_PASSWORD)
                         
                         sh "kubectl delete job model-builder-job -n mlops --ignore-not-found=true"
                         writeFile(file: 'temp-builder-job.yaml', text: builderManifest)
@@ -362,8 +369,10 @@ pipeline {
                         
                         // --- 3. Deploy to KServe ---
                         echo "--- Deploying image ${DOCKER_IMAGE_NAME} to KServe ---"
+                        // THIS IS THE FIX: Read from the template file instead of an inline string.
                         def inferenceManifest = readFile('services/kserve/inference-service.yaml')
-                        inferenceManifest = inferenceManifest.replace('<your_dockerhub_user_name>/mlflow-wine-classifier', DOCKER_IMAGE_NAME)
+                        inferenceManifest = inferenceManifest.replace('<DOCKER_IMAGE_NAME>', DOCKER_IMAGE_NAME)
+                        
                         writeFile(file: 'temp-inference-service.yaml', text: inferenceManifest)
                         sh "kubectl apply -f temp-inference-service.yaml"
 

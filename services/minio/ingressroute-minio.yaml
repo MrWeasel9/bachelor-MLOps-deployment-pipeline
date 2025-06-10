@@ -21,6 +21,6 @@ spec:
       kind: Rule
       services:
         - name: minio-console      # target the console svc
-          port: 9001
+          port: 9090               # <--- CHANGE THIS FROM 9001 TO 9090
       middlewares:
         - name: strip-minio

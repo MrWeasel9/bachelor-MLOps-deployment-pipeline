@@ -4,6 +4,11 @@ properties([
             name: 'DO_DESTROY',
             defaultValue: false,
             description: 'Set to true to destroy all infrastructure (DANGER!)'
+        ),
+        booleanParam( // Add this new parameter
+            name: 'SKIP_INFRA_INSTALL',
+            defaultValue: false,
+            description: 'Set to true to skip Terraform and RKE2 installation and go straight to Helm deployments.'
         )
     ])
 ])
@@ -19,6 +24,9 @@ pipeline {
         }
 
         stage('Terraform Init & Plan & Apply/Destroy') {
+            when {
+                expression { !params.SKIP_INFRA_INSTALL } // Only run if SKIP_INFRA_INSTALL is false
+            }
             steps {
                 withCredentials([file(credentialsId: 'gcp-terraform-key', variable: 'GCLOUD_AUTH')]) {
                     dir('terraform') {
@@ -45,10 +53,10 @@ pipeline {
                 }
             }
         }
-        
+
         stage('Configure RKE2') {
             when {
-                expression { !params.DO_DESTROY }
+                expression { !params.DO_DESTROY && !params.SKIP_INFRA_INSTALL } // Only run if not destroying AND not skipping infra
             }
             steps {
                 withCredentials([file(credentialsId: 'gcp-terraform-key', variable: 'GCLOUD_AUTH')]) {
@@ -77,7 +85,7 @@ pipeline {
 
         stage('Export kubeconfig for Local Use') {
             when {
-                expression { !params.DO_DESTROY }
+                expression { !params.DO_DESTROY && !params.SKIP_INFRA_INSTALL } // Only run if not destroying AND not skipping infra
             }
             steps {
                 withCredentials([file(credentialsId: 'gcp-terraform-key', variable: 'GCLOUD_AUTH')]) {
@@ -107,7 +115,9 @@ pipeline {
         }
 
         stage('Configure kubectl context') {
-            when { expression { !params.DO_DESTROY } }
+            when {
+                expression { !params.DO_DESTROY && !params.SKIP_INFRA_INSTALL } // Only run if not destroying AND not skipping infra
+            }
             steps {
                 sh '''
                 mkdir -p ~/.kube
@@ -116,10 +126,10 @@ pipeline {
                 kubectl get nodes -o wide
                 '''
             }
-            }
+        }
 
         stage('Remove rke2-ingress-nginx') {
-            when { expression { !params.DO_DESTROY } }
+            when { expression { !params.DO_DESTROY } } // This stage can still run even if infra is skipped, as it deals with Kubernetes configuration.
             steps {
                 sh '''
                 gcloud compute ssh mlops-master --command="sudo mv /var/lib/rancher/rke2/server/manifests/rke2-ingress-nginx.yaml ~ || true"
@@ -142,15 +152,15 @@ pipeline {
                 helm repo update
 
                 # CRDs once
-                helm upgrade --install traefik-crds traefik/traefik-crds \
-                    --namespace traefik --create-namespace \
+                helm upgrade --install traefik-crds traefik/traefik-crds \\
+                    --namespace traefik --create-namespace \\
                     --wait --timeout 120s
 
                 # Main chart (skip CRDs)
-                helm upgrade --install traefik traefik/traefik \
-                    --namespace traefik --create-namespace \
-                    --skip-crds \
-                    -f services/traefik/values.yaml \
+                helm upgrade --install traefik traefik/traefik \\
+                    --namespace traefik --create-namespace \\
+                    --skip-crds \\
+                    -f services/traefik/values.yaml \\
                     --wait --timeout 120s
                 '''
             }
@@ -168,8 +178,7 @@ pipeline {
                 kubectl -n local-path-storage rollout status deploy/local-path-provisioner --timeout=120s
                 '''
             }
-            }
-
+        }
 
         /* ----------  MLOps STACK  ---------- */
         stage('Deploy MLOps') {
@@ -189,8 +198,8 @@ pipeline {
                 sh """
                     # namespace & secrets
                     kubectl create namespace mlops || true
-                    kubectl -n mlops create secret generic minio-credentials \
-                    --from-literal=rootUser=\${MINIO_ROOT_USER} \
+                    kubectl -n mlops create secret generic minio-credentials \\
+                    --from-literal=rootUser=\${MINIO_ROOT_USER} \\
                     --from-literal=rootPassword=\${MINIO_ROOT_PASSWORD} || true
 
                     # Repos
@@ -198,19 +207,19 @@ pipeline {
                     helm repo update
 
                     # MinIO
-                    helm upgrade --install minio bitnami/minio \
-                    --namespace mlops \
+                    helm upgrade --install minio bitnami/minio \\
+                    --namespace mlops \\
                     -f services/minio/values.yaml
                     kubectl apply -f services/minio/ingressroute-minio.yaml
 
                     # PostgreSQL - Use postgres superuser with Jenkins password
-                    helm upgrade --install postgresql bitnami/postgresql \
-                    --namespace mlops \
-                    -f services/postgresql/values.yaml \
-                    --set auth.postgresPassword=${POSTGRES_PASSWORD} \
-                    --set auth.username=mlflow \
-                    --set auth.password=${POSTGRES_PASSWORD} \
-                    --set auth.database=mlflow
+                    helm upgrade --install postgresql bitnami/postgresql \\
+                    --namespace mlops \\
+                    --set auth.postgresPassword=\${POSTGRES_PASSWORD} \\
+                    --set auth.username=mlflow \\
+                    --set auth.password=\${POSTGRES_PASSWORD} \\
+                    --set auth.database=mlflow \\
+                    -f services/postgresql/values.yaml
 
 
                     # MLflow
@@ -220,9 +229,5 @@ pipeline {
                 }
             }
         }
-
-
-
-        
     }
 }

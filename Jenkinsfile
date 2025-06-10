@@ -250,5 +250,50 @@ pipeline {
                 }
             }
         }
+
+        /* ---------- KServe MODEL SERVING PLATFORM ---------- */
+        stage('Install KServe and Dependencies') {
+            when { expression { !params.DO_DESTROY } }
+            steps {
+                sh '''
+                    set -e
+                    set -x
+
+                    echo "--- 1. Installing Istio ---"
+                    # Download and extract Istio
+                    curl -L https://istio.io/downloadIstio | ISTIO_VERSION=1.22.1 TARGET_ARCH=x86_64 sh -
+                    
+                    # Install Istio using the minimal profile required for KServe
+                    ./istio-1.22.1/bin/istioctl install --set profile=minimal -y
+
+                    echo "--- Enabling Istio sidecar injection for the 'mlops' namespace ---"
+                    kubectl label namespace mlops istio-injection=enabled --overwrite=true
+
+
+                    echo "--- 2. Installing Knative Serving ---"
+                    # Apply Knative Serving CRDs, Core Components, and Istio networking layer
+                    kubectl apply -f https://github.com/knative/serving/releases/download/knative-v1.14.0/serving-crds.yaml
+                    kubectl apply -f https://github.com/knative/serving/releases/download/knative-v1.14.0/serving-core.yaml
+                    kubectl apply -f https://github.com/knative/net-istio/releases/download/knative-v1.14.0/net-istio.yaml
+
+
+                    echo "--- 3. Installing Cert-Manager ---"
+                    # Apply the Cert-Manager manifest
+                    kubectl apply -f https://github.com/cert-manager/cert-manager/releases/download/v1.15.1/cert-manager.yaml
+                    
+                    echo "--- Waiting for Cert-Manager webhook to be ready ---"
+                    # This wait is crucial to prevent race conditions before installing KServe
+                    kubectl wait --for=condition=Available deployment --all --namespace=cert-manager --timeout=300s
+
+
+                    echo "--- 4. Installing KServe ---"
+                    # Apply the core KServe manifest and the cluster-wide runtimes
+                    kubectl apply -f https://github.com/kserve/kserve/releases/download/v0.13.0/kserve.yaml
+                    kubectl apply -f https://github.com/kserve/kserve/releases/download/v0.13.0/kserve-runtimes.yaml
+
+                    echo "--- KServe installation complete! ---"
+                '''
+            }
+        }
     }
 }

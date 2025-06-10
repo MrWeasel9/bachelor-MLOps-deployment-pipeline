@@ -206,8 +206,12 @@ pipeline {
                             variable: 'POSTGRES_PASSWORD'
                         )
                     ]) {
+                        // THIS IS THE FULL, CORRECTED SCRIPT BLOCK
                         sh """
-                            # namespace & secrets
+                            set -e
+                            set -x
+
+                            # Namespace & Secrets
                             kubectl create namespace mlops || true
                             kubectl -n mlops create secret generic aws-s3-credentials \\
                             --from-literal=AWS_ACCESS_KEY_ID=\${MINIO_ROOT_USER} \\
@@ -223,7 +227,7 @@ pipeline {
                             --namespace mlops \\
                             -f services/minio/values.yaml
 
-                            # PostgreSQL - Use postgres superuser with Jenkins password
+                            # PostgreSQL
                             helm upgrade --install postgresql bitnami/postgresql \\
                             --namespace mlops \\
                             --set auth.postgresPassword=\${POSTGRES_PASSWORD} \\
@@ -232,11 +236,15 @@ pipeline {
                             --set auth.database=mlflow \\
                             -f services/postgresql/values.yaml
 
-
-                            # MLflow
+                            # MLflow Deployment & Service
                             kubectl apply -f services/mlflow/mlflow.yaml
-                            # Apply MLflow Ingress for NGINX
+
+                            # === APPLY ALL INGRESS CONFIGS ===
+                            # Apply MLflow Ingress
                             kubectl apply -f services/mlflow/mlflow-ingress.yaml
+
+                            # Apply MinIO Console Ingress
+                            kubectl apply -f services/minio/minio-ingress.yaml
                         """
                     }
                 }

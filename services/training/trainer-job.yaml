@@ -1,0 +1,47 @@
+# This manifest defines a Kubernetes Job to run the model training scripts.
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: model-training-job
+  namespace: mlops
+spec:
+  template:
+    metadata:
+      # This annotation tells Istio not to inject its sidecar proxy.
+      annotations:
+        sidecar.istio.io/inject: "false"
+    spec:
+      initContainers:
+      - name: wait-for-mlflow
+        image: busybox:1.36
+        command: ["sh", "-c", "echo 'Waiting for MLflow...' && until wget -q --spider -T 10 http://mlflow:5000/health; do sleep 5; done && echo 'MLflow is ready!'"]
+      containers:
+      - name: trainer
+        image: python:3.10-slim
+        command:
+          - "sh"
+          - "-c"
+          - |
+            set -ex
+            pip install "mlflow[mlserver]==2.14.3" scikit-learn
+            echo "--- Running hyperparameter tuning ---"
+            python /scripts/hyperparameter_tuning.py
+            echo "--- Training complete ---"
+        envFrom:
+        - secretRef:
+            name: aws-s3-credentials
+        env:
+        - name: MLFLOW_TRACKING_URI
+          value: "http://mlflow:5000"
+        - name: MLFLOW_S3_ENDPOINT_URL
+          value: "http://minio:9000"
+        volumeMounts:
+        - name: scripts-volume
+          mountPath: /scripts
+      volumes:
+      - name: scripts-volume
+        configMap:
+          name: training-scripts
+      restartPolicy: OnFailure
+  backoffLimit: 1
+  activeDeadlineSeconds: 300

@@ -1,0 +1,54 @@
+# This manifest defines a Kubernetes Job to build and push the Docker image.
+# The RUN_ID and Docker credentials are placeholders that Jenkins will replace.
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: model-builder-job
+  namespace: mlops
+spec:
+  template:
+    metadata:
+      # This annotation tells Istio not to inject its sidecar proxy.
+      annotations:
+        sidecar.istio.io/inject: "false"
+    spec:
+      containers:
+      - name: builder
+        image: python:3.10-slim
+        command:
+          - "sh"
+          - "-c"
+          - |
+            set -ex
+            pip install "mlflow[mlserver]==2.14.3" boto3
+            mlflow models build-docker -m "runs:/${RUN_ID}/model" -n "${DOCKER_IMAGE_NAME}" --enable-mlserver
+            echo "${DOCKER_PASSWORD}" | docker login --username "${DOCKER_USERNAME}" --password-stdin
+            docker push "${DOCKER_IMAGE_NAME}"
+            echo "Build and push complete!"
+        env:
+        # These values will be injected by the Jenkins pipeline
+        - name: RUN_ID
+          value: "placeholder"
+        - name: DOCKER_IMAGE_NAME
+          value: "placeholder"
+        - name: DOCKER_USERNAME
+          value: "placeholder"
+        - name: DOCKER_PASSWORD
+          value: "placeholder"
+        - name: MLFLOW_TRACKING_URI
+          value: "http://mlflow:5000"
+        - name: MLFLOW_S3_ENDPOINT_URL
+          value: "http://minio:9000"
+        envFrom:
+        - secretRef:
+            name: aws-s3-credentials
+        volumeMounts:
+        - name: docker-sock
+          mountPath: /var/run/docker.sock
+      volumes:
+      - name: docker-sock
+        hostPath:
+          path: /var/run/docker.sock
+      restartPolicy: OnFailure
+  backoffLimit: 1
+  activeDeadlineSeconds: 600

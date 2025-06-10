@@ -12,6 +12,11 @@ properties([
             defaultValue: false,
             description: 'Set to true to skip Terraform and RKE2 installation and go straight to Helm deployments.'
         )
+        booleanParam(
+            name: 'DEPLOY_NEW_MODEL',
+            defaultValue: false,
+            description: 'Set to true to train, build, and deploy a new model.'
+        )
     ])
 ])
 
@@ -327,6 +332,62 @@ pipeline {
 
                     echo "--- KServe installation complete! ---"
                 '''
+            }
+        }
+
+        stage('Train, Build, and Deploy Model') {
+            when { expression { params.DEPLOY_NEW_MODEL } }
+            steps {
+                withCredentials([
+                    usernamePassword(credentialsId: 'dockerhub-creds', usernameVariable: 'DOCKER_USERNAME', passwordVariable: 'DOCKER_PASSWORD')
+                ]) {
+                    script {
+                        def DOCKER_IMAGE_NAME = "${DOCKER_USERNAME}/mlflow-wine-classifier:v${env.BUILD_NUMBER}"
+                        
+                        // --- 1. Train Model ---
+                        echo "--- Creating ConfigMap for training scripts ---"
+                        sh "kubectl create configmap training-scripts --from-file=ml-models/wine-quality/train_wine_model.py --from-file=ml-models/wine-quality/hyperparameter_tuning.py -n mlops --dry-run=client -o yaml | kubectl apply -f -"
+                        
+                        echo "--- Starting model training job ---"
+                        sh "kubectl delete job model-training-job -n mlops --ignore-not-found=true"
+                        sh "kubectl apply -f services/training/trainer-job.yaml"
+                        sh "kubectl wait --for=condition=complete job/model-training-job -n mlops --timeout=300s"
+                        
+                        echo "--- Fetching new run ID from training logs ---"
+                        def trainingPodName = sh(script: "kubectl get pods -n mlops -l job-name=model-training-job -o jsonpath='{.items[0].metadata.name}'", returnStdout: true).trim()
+                        def logs = sh(script: "kubectl logs ${trainingPodName} -n mlops", returnStdout: true)
+                        def newRunId = (logs =~ /runs\/([a-zA-Z0-9]+)\/model/).matcher[0][1]
+                        echo "Found new Run ID: ${newRunId}"
+
+                        // --- 2. Build Image ---
+                        echo "--- Starting model builder job for Run ID: ${newRunId} ---"
+                        // Create a temporary manifest with the correct run ID and credentials
+                        def builderManifest = readFile('services/training/builder-job.yaml')
+                        builderManifest = builderManifest.replaceAll('value: "placeholder"', "value: \"${newRunId}\"")
+                        builderManifest = builderManifest.replaceAll('DOCKER_IMAGE_NAME', DOCKER_IMAGE_NAME)
+                        builderManifest = builderManifest.replaceAll('DOCKER_USERNAME', DOCKER_USERNAME)
+                        builderManifest = builderManifest.replaceAll('DOCKER_PASSWORD', DOCKER_PASSWORD)
+                        
+                        sh "kubectl delete job model-builder-job -n mlops --ignore-not-found=true"
+                        writeFile(file: 'temp-builder-job.yaml', text: builderManifest)
+                        sh "kubectl apply -f temp-builder-job.yaml"
+                        sh "kubectl wait --for=condition=complete job/model-builder-job -n mlops --timeout=600s"
+                        
+                        // --- 3. Deploy to KServe ---
+                        echo "--- Deploying image ${DOCKER_IMAGE_NAME} to KServe ---"
+                        def inferenceManifest = readFile('services/kserve/inference-service.yaml')
+                        inferenceManifest = inferenceManifest.replaceAll('<your_dockerhub_user_name>/mlflow-wine-classifier', DOCKER_IMAGE_NAME)
+                        writeFile(file: 'temp-inference-service.yaml', text: inferenceManifest)
+                        sh "kubectl apply -f temp-inference-service.yaml"
+
+                        // --- 4. Cleanup ---
+                        echo "--- Cleaning up temporary files and jobs ---"
+                        sh "rm temp-builder-job.yaml temp-inference-service.yaml"
+                        sh "kubectl delete configmap training-scripts -n mlops"
+                        sh "kubectl delete job model-training-job -n mlops"
+                        sh "kubectl delete job model-builder-job -n mlops"
+                    }
+                }
             }
         }
     }

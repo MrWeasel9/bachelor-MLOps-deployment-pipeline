@@ -181,6 +181,7 @@ pipeline {
 
         /* ----------  MLOps STACK  ---------- */
         /* ----------  MLOps STACK  ---------- */
+        /* ----------  MLOps STACK  ---------- */
         stage('Deploy MLOps') {
             when { expression { !params.DO_DESTROY } }
             steps {
@@ -228,24 +229,27 @@ pipeline {
                             --set auth.rootPassword=\${MINIO_ROOT_PASSWORD} \\
                             -f services/minio/values.yaml
 
-                            # --- NEW BLOCK: AUTOMATICALLY CREATE MINIO BUCKET ---
+                            # --- BLOCK FOR AUTOMATIC MINIO BUCKET CREATION ---
                             # Wait for MinIO pods to be ready before trying to configure it
                             echo "--- Waiting for MinIO to be ready ---"
-                            # THIS IS THE FIX: The default Helm chart creates a Deployment, not a StatefulSet
                             kubectl -n mlops rollout status deployment/minio --timeout=300s
+                            
+                            # THIS IS THE FIX: Clean up any previous failed pod before applying.
+                            echo "--- Deleting old setup pod if it exists ---"
+                            kubectl delete pod minio-bucket-setup -n mlops --ignore-not-found=true
 
-                            # Apply the setup pod manifest from the new file
+                            # Apply the setup pod manifest from the file
                             echo "--- Applying MinIO bucket setup job ---"
                             kubectl apply -f services/minio/minio-bucket-setup.yaml
 
                             # Wait for the setup pod to complete its job
                             echo "--- Waiting for MinIO bucket setup to complete ---"
-                            kubectl wait --for=condition=complete pod/minio-bucket-setup -n mlops --timeout=120s
+                            kubectl wait --for=condition=succeeded pod/minio-bucket-setup -n mlops --timeout=120s
 
                             # Clean up the setup pod
                             echo "--- Cleaning up MinIO setup pod ---"
                             kubectl delete pod minio-bucket-setup -n mlops
-                            # --- END OF NEW BLOCK ---
+                            # --- END OF BLOCK ---
 
                             # PostgreSQL
                             helm upgrade --install postgresql bitnami/postgresql \\

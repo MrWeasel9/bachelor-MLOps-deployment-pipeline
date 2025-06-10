@@ -1,5 +1,5 @@
 # This manifest defines a Kubernetes Job to build and push the Docker image.
-# The RUN_ID and Docker credentials are placeholders that Jenkins will replace.
+# The values in angle brackets are placeholders that Jenkins will replace.
 apiVersion: batch/v1
 kind: Job
 metadata:
@@ -28,13 +28,13 @@ spec:
         env:
         # These values will be injected by the Jenkins pipeline
         - name: RUN_ID
-          value: "placeholder"
+          value: "<RUN_ID_PLACEHOLDER>"
         - name: DOCKER_IMAGE_NAME
-          value: "placeholder"
+          value: "<DOCKER_IMAGE_NAME_PLACEHOLDER>"
         - name: DOCKER_USERNAME
-          value: "placeholder"
+          value: "<DOCKER_USERNAME_PLACEHOLDER>"
         - name: DOCKER_PASSWORD
-          value: "placeholder"
+          value: "<DOCKER_PASSWORD_PLACEHOLDER>"
         - name: MLFLOW_TRACKING_URI
           value: "http://mlflow:5000"
         - name: MLFLOW_S3_ENDPOINT_URL

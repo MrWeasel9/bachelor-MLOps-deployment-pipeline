@@ -343,7 +343,8 @@ pipeline {
                         
                         echo "--- Fetching new run ID from training logs ---"
                         def trainingPodName = sh(script: "kubectl get pods -n mlops -l job-name=model-training-job -o jsonpath='{.items[0].metadata.name}'", returnStdout: true).trim()
-                        def logs = sh(script: "kubectl logs ${trainingPodName} -n mlops", returnStdout: true)
+                        // THIS IS THE FIX: Explicitly get logs from the 'trainer' container.
+                        def logs = sh(script: "kubectl logs ${trainingPodName} -n mlops -c trainer", returnStdout: true)
                         
                         def newRunId
                         def runIdMatcher = (logs =~ /runs\/([a-f0-9]{32})/)
@@ -357,10 +358,11 @@ pipeline {
                         // --- 2. Build Image ---
                         echo "--- Starting model builder job for Run ID: ${newRunId} ---"
                         def builderManifest = readFile('services/training/builder-job.yaml')
-                        builderManifest = builderManifest.replace('value: "placeholder"', "value: \\\"${newRunId}\\\"") 
-                        builderManifest = builderManifest.replace('${DOCKER_IMAGE_NAME}', DOCKER_IMAGE_NAME)
-                        builderManifest = builderManifest.replace('${DOCKER_USERNAME}', DOCKER_USERNAME)
-                        builderManifest = builderManifest.replace('${DOCKER_PASSWORD}', DOCKER_PASSWORD)
+                        // THIS IS THE FIX: Use unique placeholders for reliable replacement.
+                        builderManifest = builderManifest.replace('<RUN_ID_PLACEHOLDER>', newRunId) 
+                        builderManifest = builderManifest.replace('<DOCKER_IMAGE_NAME_PLACEHOLDER>', DOCKER_IMAGE_NAME)
+                        builderManifest = builderManifest.replace('<DOCKER_USERNAME_PLACEHOLDER>', DOCKER_USERNAME)
+                        builderManifest = builderManifest.replace('<DOCKER_PASSWORD_PLACEHOLDER>', DOCKER_PASSWORD)
                         
                         sh "kubectl delete job model-builder-job -n mlops --ignore-not-found=true"
                         writeFile(file: 'temp-builder-job.yaml', text: builderManifest)
@@ -369,7 +371,6 @@ pipeline {
                         
                         // --- 3. Deploy to KServe ---
                         echo "--- Deploying image ${DOCKER_IMAGE_NAME} to KServe ---"
-                        // THIS IS THE FIX: Read from the template file instead of an inline string.
                         def inferenceManifest = readFile('services/kserve/inference-service.yaml')
                         inferenceManifest = inferenceManifest.replace('<DOCKER_IMAGE_NAME>', DOCKER_IMAGE_NAME)
                         

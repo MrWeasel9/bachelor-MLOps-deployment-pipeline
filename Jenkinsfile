@@ -179,8 +179,7 @@ pipeline {
             }
         }
 
-        /* ----------  MLOps STACK  ---------- */
-        /* ----------  MLOps STACK  ---------- */
+        
         /* ----------  MLOps STACK  ---------- */
         stage('Deploy MLOps') {
             when { expression { !params.DO_DESTROY } }
@@ -234,7 +233,7 @@ pipeline {
                             echo "--- Waiting for MinIO to be ready ---"
                             kubectl -n mlops rollout status deployment/minio --timeout=300s
                             
-                            # THIS IS THE FIX: Clean up any previous failed pod before applying.
+                            # Clean up any previous failed pod before applying.
                             echo "--- Deleting old setup pod if it exists ---"
                             kubectl delete pod minio-bucket-setup -n mlops --ignore-not-found=true
 
@@ -244,7 +243,8 @@ pipeline {
 
                             # Wait for the setup pod to complete its job
                             echo "--- Waiting for MinIO bucket setup to complete ---"
-                            kubectl wait --for=condition=succeeded pod/minio-bucket-setup -n mlops --timeout=120s
+                            # THIS IS THE FIX: The 'complete' condition is for Pods, 'succeeded' is for Jobs.
+                            kubectl wait --for=condition=complete pod/minio-bucket-setup -n mlops --timeout=120s
 
                             # Clean up the setup pod
                             echo "--- Cleaning up MinIO setup pod ---"

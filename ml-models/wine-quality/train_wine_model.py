@@ -14,7 +14,7 @@ def eval_metrics(pred, actual):
 
 # Set the MLflow tracking URI to your cluster
 # Replace with your actual master external IP
-mlflow.set_tracking_uri("http://34.118.28.157:32255/mlflow/")
+mlflow.set_tracking_uri("http://34.116.205.52:32255/mlflow/")
 
 # Set the experiment name
 mlflow.set_experiment("wine-quality")

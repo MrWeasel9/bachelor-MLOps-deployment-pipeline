@@ -1,0 +1,32 @@
+# This pod uses the MinIO Client (mc) to create the 'mlflow-artifacts' bucket.
+# It runs as a one-time job after the main MinIO service is installed.
+apiVersion: v1
+kind: Pod
+metadata:
+  name: minio-bucket-setup
+  namespace: mlops
+spec:
+  containers:
+  - name: mc-container
+    image: minio/mc
+    command:
+      - "sh"
+      - "-c"
+      - |
+        set -ex
+        # Use credentials loaded from the secret to configure the client
+        mc alias set minio-cluster http://minio:9000 $AWS_ACCESS_KEY_ID $AWS_SECRET_ACCESS_KEY
+        
+        # Create the bucket, ignoring the error if it already exists
+        mc mb minio-cluster/mlflow-artifacts || echo "Bucket 'mlflow-artifacts' already exists."
+        
+        # Set a public-read policy so MLflow can easily access artifacts
+        mc policy set download minio-cluster/mlflow-artifacts
+        
+        echo "MinIO setup complete."
+    envFrom:
+    - secretRef:
+        # This loads the credentials (AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY)
+        # from the secret that the Jenkins pipeline creates.
+        name: aws-s3-credentials
+  restartPolicy: OnFailure

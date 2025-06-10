@@ -181,6 +181,7 @@ pipeline {
 
         /* ----------  MLOps STACK  ---------- */
         /* ----------  MLOps STACK  ---------- */
+        /* ----------  MLOps STACK  ---------- */
         stage('Deploy MLOps') {
             when { expression { !params.DO_DESTROY } }
             steps {
@@ -206,7 +207,6 @@ pipeline {
                             variable: 'POSTGRES_PASSWORD'
                         )
                     ]) {
-                        // THIS IS THE FULL, CORRECTED SCRIPT BLOCK
                         sh """
                             set -e
                             set -x
@@ -225,7 +225,27 @@ pipeline {
                             # MinIO
                             helm upgrade --install minio bitnami/minio \\
                             --namespace mlops \\
+                            --set auth.rootUser=\${MINIO_ROOT_USER} \\
+                            --set auth.rootPassword=\${MINIO_ROOT_PASSWORD} \\
                             -f services/minio/values.yaml
+
+                            # --- NEW BLOCK: AUTOMATICALLY CREATE MINIO BUCKET ---
+                            # Wait for MinIO pods to be ready before trying to configure it
+                            echo "--- Waiting for MinIO to be ready ---"
+                            kubectl -n mlops rollout status statefulset/minio --timeout=300s
+
+                            # Apply the setup pod manifest from the new file
+                            echo "--- Applying MinIO bucket setup job ---"
+                            kubectl apply -f services/minio/minio-bucket-setup.yaml
+
+                            # Wait for the setup pod to complete its job
+                            echo "--- Waiting for MinIO bucket setup to complete ---"
+                            kubectl wait --for=condition=complete pod/minio-bucket-setup -n mlops --timeout=120s
+
+                            # Clean up the setup pod
+                            echo "--- Cleaning up MinIO setup pod ---"
+                            kubectl delete pod minio-bucket-setup -n mlops
+                            # --- END OF NEW BLOCK ---
 
                             # PostgreSQL
                             helm upgrade --install postgresql bitnami/postgresql \\

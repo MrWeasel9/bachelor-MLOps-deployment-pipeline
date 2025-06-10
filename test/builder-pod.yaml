@@ -1,0 +1,47 @@
+apiVersion: v1
+kind: Pod
+metadata:
+  name: model-builder
+  namespace: mlops
+spec:
+  containers:
+  - name: builder
+    image: python:3.10-slim
+    command:
+      - "sh"
+      - "-c"
+      - |
+        set -ex
+        pip install "mlflow[mlserver]==2.14.3" boto3
+        
+        # 1. Build the Docker image using the model from MLflow/MinIO
+        mlflow models build-docker \
+          -m "runs:/619d1014451f437fb9968d5637fe6b39/model" \
+          -n "mrweasel99/mlflow-wine-classifier" \
+          --enable-mlserver
+
+        # 2. Login to Docker Hub
+        # Note: Corrected username to match the image repository owner
+        echo "OregonTrail#1883" | docker login --username "mrweasel99" --password-stdin
+
+        # 3. Push the image
+        docker push "mrweasel99/mlflow-wine-classifier"
+
+        echo "Build and push complete!"
+    envFrom:
+    - secretRef:
+        name: aws-s3-credentials
+    env:
+    # Added the MLflow Tracking Server URI
+    - name: MLFLOW_TRACKING_URI
+      value: "http://mlflow:5000"
+    - name: MLFLOW_S3_ENDPOINT_URL
+      value: "http://minio:9000"
+    volumeMounts:
+    - name: docker-sock
+      mountPath: /var/run/docker.sock
+  volumes:
+  - name: docker-sock
+    hostPath:
+      path: /var/run/docker.sock
+  restartPolicy: Never

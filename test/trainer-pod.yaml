@@ -1,0 +1,42 @@
+apiVersion: v1
+kind: Pod
+metadata:
+  name: model-trainer
+  namespace: mlops
+spec:
+  containers:
+  - name: trainer
+    image: python:3.10-slim
+    command:
+      - "sh"
+      - "-c"
+      - |
+        set -ex
+        # Install dependencies
+        pip install "mlflow[mlserver]==2.14.3" scikit-learn
+
+        # Run the training and tuning scripts
+        echo "--- Running baseline training ---"
+        python /scripts/train_wine_model.py
+
+        echo "--- Running hyperparameter tuning ---"
+        python /scripts/hyperparameter_tuning.py
+        
+        echo "--- Training complete. Check logs for new run IDs. ---"
+    envFrom:
+    - secretRef:
+        name: aws-s3-credentials
+    env:
+    # Set variables for MLflow server and MinIO artifact store
+    - name: MLFLOW_TRACKING_URI
+      value: "http://mlflow:5000"
+    - name: MLFLOW_S3_ENDPOINT_URL
+      value: "http://minio:9000"
+    volumeMounts:
+    - name: scripts-volume
+      mountPath: /scripts
+  volumes:
+  - name: scripts-volume
+    configMap:
+      name: training-scripts
+  restartPolicy: Never

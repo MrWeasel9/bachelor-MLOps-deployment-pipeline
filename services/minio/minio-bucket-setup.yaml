@@ -6,6 +6,23 @@ metadata:
   name: minio-bucket-setup
   namespace: mlops
 spec:
+  # NEW: An initContainer waits for the MinIO service to be fully healthy
+  # before the main mc-container starts. This prevents connection errors.
+  initContainers:
+  - name: wait-for-minio
+    image: busybox:1.36
+    command:
+      - "sh"
+      - "-c"
+      - |
+        echo "Waiting for MinIO service to be ready..."
+        # This command repeatedly tries to connect to MinIO's health endpoint.
+        # It will only succeed and allow the pod to continue once MinIO is fully active.
+        until wget -q --spider -T 10 http://minio:9000/minio/health/live; do
+          echo "MinIO not ready yet, sleeping for 5 seconds..."
+          sleep 5
+        done
+        echo "MinIO is ready! Proceeding with bucket setup."
   containers:
   - name: mc-container
     image: minio/mc

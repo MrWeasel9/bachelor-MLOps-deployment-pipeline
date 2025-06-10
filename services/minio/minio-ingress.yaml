@@ -4,17 +4,17 @@ kind: Ingress
 metadata:
   name: minio-console-ingress
   namespace: mlops
-  annotations:
-    nginx.ingress.kubernetes.io/rewrite-target: /$1
-    kubernetes.io/ingress.class: nginx
+  # The rewrite annotation is no longer needed and has been removed.
 spec:
   ingressClassName: nginx
   rules:
-  - http:
+  # This rule applies only to requests for "minio-console.local"
+  - host: minio-console.local
+    http:
       paths:
-      - path: /minio/(.*)
-        # CORRECTED: Use ImplementationSpecific for regex paths
-        pathType: ImplementationSpecific
+      # The path is now "/", matching the root of the site.
+      - path: /
+        pathType: Prefix
         backend:
           service:
             name: minio-console

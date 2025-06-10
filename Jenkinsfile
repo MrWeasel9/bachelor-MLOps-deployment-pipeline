@@ -221,11 +221,7 @@ pipeline {
                             # MinIO
                             helm upgrade --install minio bitnami/minio \\
                             --namespace mlops \\
-                            -f services/minio/values.yaml \\
-                            --set "console.extraEnvVars[0].name=MINIO_BROWSER_REDIRECT_URL" \\
-                            --set "console.extraEnvVars[0].value=/minio/" \\
-                            --set "console.extraEnvVars[1].name=MINIO_SERVER_URL" \\
-                            --set "console.extraEnvVars[1].value=http://${MASTER_EXTERNAL_IP}:32255/minio/"
+                            -f services/minio/values.yaml
 
                             # PostgreSQL - Use postgres superuser with Jenkins password
                             helm upgrade --install postgresql bitnami/postgresql \\

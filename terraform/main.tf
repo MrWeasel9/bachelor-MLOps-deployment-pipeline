@@ -1,9 +1,14 @@
 # terraform/main.tf
 
 # Reserve static internal and external IPs
+
 resource "google_compute_address" "mlops_master_external" {
   name   = "mlops-master-external-ip"
   region = var.region
+
+  lifecycle {
+    prevent_destroy = true
+  }
 }
 
 resource "google_compute_address" "mlops_master_internal" {

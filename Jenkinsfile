@@ -280,61 +280,48 @@ pipeline {
         }
 
 
-        /* ---------- KServe MODEL SERVING PLATFORM ---------- */
-        /* ---------- KServe MODEL SERVING PLATFORM ---------- */
-        /* ---------- KServe MODEL SERVING PLATFORM ---------- */
+        // --- THIS STAGE IS UPDATED WITH THE FIX ---
         stage('Install KServe and Dependencies') {
-            when { expression { !params.DO_DESTROY } }
+            when { expression { !params.DO_DESTROY && !params.SKIP_INFRA_DEPLOY } }
             steps {
                 sh '''
                     set -e
                     set -x
 
                     echo "--- 1. Installing Istio ---"
-                    # Download and extract Istio
                     curl -L https://istio.io/downloadIstio | ISTIO_VERSION=1.22.1 TARGET_ARCH=x86_64 sh -
-                    
-                    # Install Istio using the minimal profile required for KServe
                     ./istio-1.22.1/bin/istioctl install --set profile=minimal -y
-
-                    echo "--- Enabling Istio sidecar injection for the 'mlops' namespace ---"
                     kubectl label namespace mlops istio-injection=enabled --overwrite=true
 
-
                     echo "--- 2. Installing Knative Serving ---"
-                    # Apply Knative Serving CRDs and Core Components
                     kubectl apply -f https://github.com/knative/serving/releases/download/knative-v1.14.0/serving-crds.yaml
                     kubectl apply -f https://github.com/knative/serving/releases/download/knative-v1.14.0/serving-core.yaml
-                    
                     echo "--- Waiting for Knative Serving webhooks to be ready ---"
-                    # Wait for Knative deployments to become available before proceeding
                     kubectl wait --for=condition=Available deployment --all --namespace=knative-serving --timeout=300s
-
-                    # Apply the Istio networking layer for Knative
                     kubectl apply -f https://github.com/knative/net-istio/releases/download/knative-v1.14.0/net-istio.yaml
 
-
                     echo "--- 3. Installing Cert-Manager ---"
-                    # Apply the Cert-Manager manifest
                     kubectl apply -f https://github.com/cert-manager/cert-manager/releases/download/v1.15.1/cert-manager.yaml
-                    
                     echo "--- Waiting for Cert-Manager webhook to be ready ---"
-                    # This wait is crucial to prevent race conditions before installing KServe
                     kubectl wait --for=condition=Available deployment --all --namespace=cert-manager --timeout=300s
-
 
                     echo "--- 4. Installing KServe ---"
                     # Apply the core KServe manifest
                     kubectl apply -f https://github.com/kserve/kserve/releases/download/v0.13.0/kserve.yaml
+                    
+                    # THIS IS THE FIX: Wait for the KServe webhook to be ready before applying cluster resources.
+                    echo "--- Waiting for KServe webhook to be ready ---"
+                    kubectl wait --for=condition=Available deployment --all --namespace=kserve --timeout=300s
 
-                    # THIS IS THE FIX: Use the correct filename for cluster-wide resources
+                    # Apply the cluster-wide resources
                     kubectl apply -f https://github.com/kserve/kserve/releases/download/v0.13.0/kserve-cluster-resources.yaml
 
                     echo "--- KServe installation complete! ---"
                 '''
             }
         }
-
+        
+        // --- THIS IS THE NEW AUTOMATED CI/CD STAGE FOR MODELS ---
         stage('Train, Build, and Deploy Model') {
             when { expression { params.DEPLOY_NEW_MODEL } }
             steps {
@@ -363,10 +350,10 @@ pipeline {
                         echo "--- Starting model builder job for Run ID: ${newRunId} ---"
                         // Create a temporary manifest with the correct run ID and credentials
                         def builderManifest = readFile('services/training/builder-job.yaml')
-                        builderManifest = builderManifest.replaceAll('value: "placeholder"', "value: \"${newRunId}\"")
-                        builderManifest = builderManifest.replaceAll('DOCKER_IMAGE_NAME', DOCKER_IMAGE_NAME)
-                        builderManifest = builderManifest.replaceAll('DOCKER_USERNAME', DOCKER_USERNAME)
-                        builderManifest = builderManifest.replaceAll('DOCKER_PASSWORD', DOCKER_PASSWORD)
+                        builderManifest = builderManifest.replace('value: "placeholder"', "value: \"${newRunId}\"")
+                        builderManifest = builderManifest.replace('DOCKER_IMAGE_NAME', DOCKER_IMAGE_NAME)
+                        builderManifest = builderManifest.replace('DOCKER_USERNAME', DOCKER_USERNAME)
+                        builderManifest = builderManifest.replace('DOCKER_PASSWORD', DOCKER_PASSWORD)
                         
                         sh "kubectl delete job model-builder-job -n mlops --ignore-not-found=true"
                         writeFile(file: 'temp-builder-job.yaml', text: builderManifest)
@@ -376,7 +363,7 @@ pipeline {
                         // --- 3. Deploy to KServe ---
                         echo "--- Deploying image ${DOCKER_IMAGE_NAME} to KServe ---"
                         def inferenceManifest = readFile('services/kserve/inference-service.yaml')
-                        inferenceManifest = inferenceManifest.replaceAll('<your_dockerhub_user_name>/mlflow-wine-classifier', DOCKER_IMAGE_NAME)
+                        inferenceManifest = inferenceManifest.replace('<your_dockerhub_user_name>/mlflow-wine-classifier', DOCKER_IMAGE_NAME)
                         writeFile(file: 'temp-inference-service.yaml', text: inferenceManifest)
                         sh "kubectl apply -f temp-inference-service.yaml"
 

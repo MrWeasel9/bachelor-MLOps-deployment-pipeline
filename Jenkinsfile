@@ -335,33 +335,21 @@ pipeline {
                         
                         // --- 1. Train Model ---
                         echo "--- Creating ConfigMap for training scripts ---"
-                        sh "kubectl create configmap training-scripts --from-file=ml-models/wine-quality/train_wine_model.py --from-file=ml-models/wine-quality/hyperparameter_tuning.py -n mlops --dry-run=client -o yaml | kubectl apply -f -"
+                        sh "kubectl create configmap training-scripts --from-file=ml-models/wine-quality/hyperparameter_tuning.py -n mlops --dry-run=client -o yaml | kubectl apply -f -"
                         
                         echo "--- Starting model training job ---"
                         sh "kubectl delete job model-training-job -n mlops --ignore-not-found=true"
                         sh "kubectl apply -f services/training/trainer-job.yaml"
                         sh "kubectl wait --for=condition=complete job/model-training-job -n mlops --timeout=300s"
                         
-                        echo "--- Fetching new run ID from training logs ---"
+                        echo "--- Fetching new run ID from result file ---"
                         def trainingPodName = sh(script: "kubectl get pods -n mlops -l job-name=model-training-job -o jsonpath='{.items[0].metadata.name}'", returnStdout: true).trim()
-
-                        // THIS IS THE FIX: Add a retry loop to give the logs time to become available.
-                        def logs = ''
-                        for (int i = 0; i < 5; i++) {
-                            logs = sh(script: "kubectl logs ${trainingPodName} -n mlops -c trainer", returnStdout: true).trim()
-                            if (logs) {
-                                break
-                            }
-                            echo "Logs not ready yet, waiting 5 seconds..."
-                            sleep(5)
-                        }
                         
-                        def newRunId
-                        def runIdMatcher = (logs =~ /runs\/([a-f0-9]{32})/)
-                        if (runIdMatcher.find()) {
-                            newRunId = runIdMatcher.group(1)
-                        } else {
-                            error "Could not find a valid Run ID in the training logs."
+                        sh "kubectl cp -n mlops ${trainingPodName}:/tmp/run_id.txt ./run_id.txt"
+                        def newRunId = readFile('run_id.txt').trim()
+
+                        if (!newRunId) {
+                            error "Could not retrieve a valid Run ID from the training job."
                         }
                         echo "Found new Run ID: ${newRunId}"
 
@@ -388,7 +376,7 @@ pipeline {
 
                         // --- 4. Cleanup ---
                         echo "--- Cleaning up temporary files and jobs ---"
-                        sh "rm temp-builder-job.yaml temp-inference-service.yaml"
+                        sh "rm temp-builder-job.yaml temp-inference-service.yaml run_id.txt"
                         sh "kubectl delete configmap training-scripts -n mlops"
                         sh "kubectl delete job model-training-job -n mlops"
                         sh "kubectl delete job model-builder-job -n mlops"

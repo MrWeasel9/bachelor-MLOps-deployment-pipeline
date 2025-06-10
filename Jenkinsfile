@@ -11,7 +11,7 @@ properties([
             name: 'SKIP_INFRA_INSTALL',
             defaultValue: false,
             description: 'Set to true to skip Terraform and RKE2 installation and go straight to Helm deployments.'
-        )
+        ),
         booleanParam(
             name: 'DEPLOY_NEW_MODEL',
             defaultValue: false,

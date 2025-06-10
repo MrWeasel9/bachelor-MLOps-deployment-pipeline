@@ -195,9 +195,11 @@ pipeline {
                 sh """
                     # namespace & secrets
                     kubectl create namespace mlops || true
-                    kubectl -n mlops create secret generic minio-credentials \\
-                    --from-literal=rootUser=\${MINIO_ROOT_USER} \\
-                    --from-literal=rootPassword=\${MINIO_ROOT_PASSWORD} || true
+                    # MODIFIED: Changed secret name and keys to what the S3 client expects
+                    kubectl -n mlops create secret generic aws-s3-credentials \\
+                    --from-literal=AWS_ACCESS_KEY_ID=\${MINIO_ROOT_USER} \\
+                    --from-literal=AWS_SECRET_ACCESS_KEY=\${MINIO_ROOT_PASSWORD} \\
+                    --dry-run=client -o yaml | kubectl apply -f -
 
                     # Repos
                     helm repo add bitnami https://charts.bitnami.com/bitnami

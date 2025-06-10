@@ -1,52 +1,31 @@
-apiVersion: v1
-kind: Service
-metadata:
-  name: mlflow
-  namespace: mlops
+# services/mlflow/mlflow.yaml
+# ... (apiVersion, kind, metadata, etc. are unchanged) ...
 spec:
-  type: ClusterIP
-  selector:
-    app: mlflow
-  ports:
-  - port: 5000
-    targetPort: 5000
----
-apiVersion: apps/v1
-kind: Deployment
-metadata:
-  name: mlflow
-  namespace: mlops
-spec:
-  replicas: 1
-  selector:
-    matchLabels:
-      app: mlflow
-  template:
-    metadata:
-      labels:
-        app: mlflow
-    spec:
-      containers:
-      - name: mlflow
-        image: bitnami/mlflow:2.22.0-debian-12-r5
-        imagePullPolicy: IfNotPresent
-        command:
-          - sh
-          - -c
-          - |
-            mlflow server \
-              --host 0.0.0.0 \
-              --port 5000 \
-              --backend-store-uri "postgresql://mlflow:${POSTGRES_PASSWORD}@postgresql:5432/mlflow" \
-              --default-artifact-root "s3://minio/mlflow-artifacts"
-        ports:
-        - containerPort: 5000
-        env:
-        - name: POSTGRES_PASSWORD
-          valueFrom:
-            secretKeyRef:
-              name: postgresql
-              key: postgres-password
-        envFrom:
-        - secretRef:
-            name: minio-credentials
+  containers:
+  - name: mlflow
+    image: bitnami/mlflow:2.22.0-debian-12-r5
+    imagePullPolicy: IfNotPresent
+    command:
+      - sh
+      - -c
+      - |
+        mlflow server \
+          --host 0.0.0.0 \
+          --port 5000 \
+          --backend-store-uri "postgresql://mlflow:${POSTGRES_PASSWORD}@postgresql:5432/mlflow" \
+          --default-artifact-root "s3://minio/mlflow-artifacts"
+    ports:
+    - containerPort: 5000
+    env:
+    - name: POSTGRES_PASSWORD
+      valueFrom:
+        secretKeyRef:
+          name: postgresql
+          key: postgres-password
+    # ADD THIS NEW ENV VARIABLE
+    - name: MLFLOW_S3_ENDPOINT_URL
+      value: "http://minio:9000" # Points to the MinIO service within the cluster
+    # CHANGE minio-credentials TO aws-s3-credentials for clarity
+    envFrom:
+    - secretRef:
+        name: aws-s3-credentials # Changed for clarity, matches new secret name

@@ -14,13 +14,13 @@ metadata:
   name: minio
   namespace: mlops
 spec:
-  entryPoints:
-    - web
-  routes:
-    - match: PathPrefix(`/minio`)
-      kind: Rule
-      services:
-        - name: minio-console      # target the console svc
-          port: 9090               # <--- CHANGE THIS FROM 9001 TO 9090
-      middlewares:
-        - name: strip-minio
+    entryPoints:
+      - web
+    routes:
+      - match: PathPrefix(`/minio`)
+        kind: Rule
+        services:
+          - name: minio-console
+            port: 9090 # This is now correct and matches your service
+        middlewares:
+          - name: strip-minio

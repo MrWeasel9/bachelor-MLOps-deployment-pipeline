@@ -1,3 +1,4 @@
+# minio/values.yaml (Modified)
 rootUser: "${MINIO_ROOT_USER}"
 rootPassword: "${MINIO_ROOT_PASSWORD}"
 
@@ -13,4 +14,9 @@ service:
 console:
   enabled: true
   service:
-    port: 9001
+    port: 9090 # Ensure this matches your minio-console service's actual port
+
+# Add this section to set the environment variable
+extraEnvVars:
+  - name: MINIO_BROWSER_REDIRECT_URL
+    value: "http://34.118.28.157:32255/minio" # <--- IMPORTANT: Set this to your external Traefik URL + IngressRoute path

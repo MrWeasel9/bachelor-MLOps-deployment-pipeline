@@ -180,7 +180,6 @@ pipeline {
         }
 
         /* ----------  MLOps STACK  ---------- */
-        /* ----------  MLOps STACK  ---------- */
         /* ----------  MLOps STACK  ---------- */
         stage('Deploy MLOps') {
             when { expression { !params.DO_DESTROY } }
@@ -232,7 +231,8 @@ pipeline {
                             # --- NEW BLOCK: AUTOMATICALLY CREATE MINIO BUCKET ---
                             # Wait for MinIO pods to be ready before trying to configure it
                             echo "--- Waiting for MinIO to be ready ---"
-                            kubectl -n mlops rollout status statefulset/minio --timeout=300s
+                            # THIS IS THE FIX: The default Helm chart creates a Deployment, not a StatefulSet
+                            kubectl -n mlops rollout status deployment/minio --timeout=300s
 
                             # Apply the setup pod manifest from the new file
                             echo "--- Applying MinIO bucket setup job ---"

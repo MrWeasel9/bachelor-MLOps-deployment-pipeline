@@ -323,6 +323,7 @@ pipeline {
         
 
         // --- THIS IS THE NEW AUTOMATED CI/CD STAGE FOR MODELS ---
+        // --- THIS IS THE NEW AUTOMATED CI/CD STAGE FOR MODELS ---
         stage('Train, Build, and Deploy Model') {
             when { expression { params.DEPLOY_NEW_MODEL } }
             steps {
@@ -343,8 +344,17 @@ pipeline {
                         
                         echo "--- Fetching new run ID from training logs ---"
                         def trainingPodName = sh(script: "kubectl get pods -n mlops -l job-name=model-training-job -o jsonpath='{.items[0].metadata.name}'", returnStdout: true).trim()
-                        // THIS IS THE FIX: Explicitly get logs from the 'trainer' container.
-                        def logs = sh(script: "kubectl logs ${trainingPodName} -n mlops -c trainer", returnStdout: true)
+
+                        // THIS IS THE FIX: Add a retry loop to give the logs time to become available.
+                        def logs = ''
+                        for (int i = 0; i < 5; i++) {
+                            logs = sh(script: "kubectl logs ${trainingPodName} -n mlops -c trainer", returnStdout: true).trim()
+                            if (logs) {
+                                break
+                            }
+                            echo "Logs not ready yet, waiting 5 seconds..."
+                            sleep(5)
+                        }
                         
                         def newRunId
                         def runIdMatcher = (logs =~ /runs\/([a-f0-9]{32})/)
@@ -358,7 +368,6 @@ pipeline {
                         // --- 2. Build Image ---
                         echo "--- Starting model builder job for Run ID: ${newRunId} ---"
                         def builderManifest = readFile('services/training/builder-job.yaml')
-                        // THIS IS THE FIX: Use unique placeholders for reliable replacement.
                         builderManifest = builderManifest.replace('<RUN_ID_PLACEHOLDER>', newRunId) 
                         builderManifest = builderManifest.replace('<DOCKER_IMAGE_NAME_PLACEHOLDER>', DOCKER_IMAGE_NAME)
                         builderManifest = builderManifest.replace('<DOCKER_USERNAME_PLACEHOLDER>', DOCKER_USERNAME)

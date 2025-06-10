@@ -252,6 +252,7 @@ pipeline {
         }
 
         /* ---------- KServe MODEL SERVING PLATFORM ---------- */
+        /* ---------- KServe MODEL SERVING PLATFORM ---------- */
         stage('Install KServe and Dependencies') {
             when { expression { !params.DO_DESTROY } }
             steps {
@@ -271,9 +272,15 @@ pipeline {
 
 
                     echo "--- 2. Installing Knative Serving ---"
-                    # Apply Knative Serving CRDs, Core Components, and Istio networking layer
+                    # Apply Knative Serving CRDs and Core Components
                     kubectl apply -f https://github.com/knative/serving/releases/download/knative-v1.14.0/serving-crds.yaml
                     kubectl apply -f https://github.com/knative/serving/releases/download/knative-v1.14.0/serving-core.yaml
+                    
+                    echo "--- Waiting for Knative Serving webhooks to be ready ---"
+                    # THIS IS THE FIX: Wait for Knative deployments to become available before proceeding
+                    kubectl wait --for=condition=Available deployment --all --namespace=knative-serving --timeout=300s
+
+                    # Apply the Istio networking layer for Knative
                     kubectl apply -f https://github.com/knative/net-istio/releases/download/knative-v1.14.0/net-istio.yaml
 
 

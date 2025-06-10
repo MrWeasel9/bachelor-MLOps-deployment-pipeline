@@ -1,3 +1,5 @@
+def MASTER_EXTERNAL_IP
+
 properties([
     parameters([
         booleanParam(
@@ -178,60 +180,69 @@ pipeline {
         }
 
         /* ----------  MLOps STACK  ---------- */
+        /* ----------  MLOps STACK  ---------- */
         stage('Deploy MLOps') {
             when { expression { !params.DO_DESTROY } }
             steps {
-                withCredentials([
-                usernamePassword(
-                    credentialsId: 'minio-root-creds',
-                    usernameVariable: 'MINIO_ROOT_USER',
-                    passwordVariable: 'MINIO_ROOT_PASSWORD'
-                ),
-                string(
-                    credentialsId: 'postgres-password',
-                    variable: 'POSTGRES_PASSWORD'
-                )
-                ]) {
-                sh """
-                    # namespace & secrets
-                    kubectl create namespace mlops || true
-                    # MODIFIED: Changed secret name and keys to what the S3 client expects
-                    kubectl -n mlops create secret generic aws-s3-credentials \\
-                    --from-literal=AWS_ACCESS_KEY_ID=\${MINIO_ROOT_USER} \\
-                    --from-literal=AWS_SECRET_ACCESS_KEY=\${MINIO_ROOT_PASSWORD} \\
-                    --dry-run=client -o yaml | kubectl apply -f -
+                script {
+                    // This ensures MASTER_EXTERNAL_IP is populated even if the Terraform stage was skipped
+                    if (!MASTER_EXTERNAL_IP) {
+                        echo "MASTER_EXTERNAL_IP not set, fetching from Terraform state..."
+                        withCredentials([file(credentialsId: 'gcp-terraform-key', variable: 'GCLOUD_AUTH')]) {
+                            dir('terraform') {
+                                MASTER_EXTERNAL_IP = sh(script: "terraform output -raw master_external_ip", returnStdout: true).trim()
+                            }
+                        }
+                    }
 
-                    # Repos
-                    helm repo add bitnami https://charts.bitnami.com/bitnami
-                    helm repo update
+                    withCredentials([
+                        usernamePassword(
+                            credentialsId: 'minio-root-creds',
+                            usernameVariable: 'MINIO_ROOT_USER',
+                            passwordVariable: 'MINIO_ROOT_PASSWORD'
+                        ),
+                        string(
+                            credentialsId: 'postgres-password',
+                            variable: 'POSTGRES_PASSWORD'
+                        )
+                    ]) {
+                        sh """
+                            # namespace & secrets
+                            kubectl create namespace mlops || true
+                            kubectl -n mlops create secret generic aws-s3-credentials \\
+                            --from-literal=AWS_ACCESS_KEY_ID=\${MINIO_ROOT_USER} \\
+                            --from-literal=AWS_SECRET_ACCESS_KEY=\${MINIO_ROOT_PASSWORD} \\
+                            --dry-run=client -o yaml | kubectl apply -f -
 
-                    # MinIO
-                    helm upgrade --install minio bitnami/minio \\
-                    --namespace mlops \\
-                    -f services/minio/values.yaml \\
-                    --set "extraEnvVars[0].name=MINIO_BROWSER_REDIRECT_URL" \\
-                    --set "extraEnvVars[0].value=/minio/" \\
-                    --set "extraEnvVars[1].name=MINIO_SERVER_URL" \\
-                    --set "extraEnvVars[1].value=http://${MASTER_EXTERNAL_IP}:32255/minio"
+                            # Repos
+                            helm repo add bitnami https://charts.bitnami.com/bitnami
+                            helm repo update
 
-                    # Apply MinIO Ingress for NGINX
-                    kubectl apply -f services/minio/minio-ingress.yaml
+                            # MinIO
+                            helm upgrade --install minio bitnami/minio \\
+                            --namespace mlops \\
+                            -f services/minio/values.yaml \\
+                            --set "extraEnvVars[0].name=MINIO_BROWSER_REDIRECT_URL" \\
+                            --set "extraEnvVars[0].value=/minio/" \\
+                            --set "extraEnvVars[1].name=MINIO_SERVER_URL" \\
+                            --set "extraEnvVars[1].value=http://${MASTER_EXTERNAL_IP}:32255/minio"
 
-                    # PostgreSQL - Use postgres superuser with Jenkins password
-                    helm upgrade --install postgresql bitnami/postgresql \\
-                    --namespace mlops \\
-                    --set auth.postgresPassword=\${POSTGRES_PASSWORD} \\
-                    --set auth.username=mlflow \\
-                    --set auth.password=\${POSTGRES_PASSWORD} \\
-                    --set auth.database=mlflow \\
-                    -f services/postgresql/values.yaml
+                            # PostgreSQL - Use postgres superuser with Jenkins password
+                            helm upgrade --install postgresql bitnami/postgresql \\
+                            --namespace mlops \\
+                            --set auth.postgresPassword=\${POSTGRES_PASSWORD} \\
+                            --set auth.username=mlflow \\
+                            --set auth.password=\${POSTGRES_PASSWORD} \\
+                            --set auth.database=mlflow \\
+                            -f services/postgresql/values.yaml
 
 
-                    # MLflow
-                    kubectl apply -f services/mlflow/mlflow.yaml
-                    # Apply MLflow Ingress for NGINX
-                    kubectl apply -f services/mlflow/mlflow-ingress.yaml
-                """
+                            # MLflow
+                            kubectl apply -f services/mlflow/mlflow.yaml
+                            # Apply MLflow Ingress for NGINX
+                            kubectl apply -f services/mlflow/mlflow-ingress.yaml
+                        """
+                    }
                 }
             }
         }

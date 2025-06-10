@@ -1,53 +1,56 @@
-# This pod uses the MinIO Client (mc) to create the 'mlflow-artifacts' bucket.
-# It runs as a one-time job after the main MinIO service is installed.
-apiVersion: v1
-kind: Pod
+# This manifest defines a Kubernetes Job to create the 'mlflow-artifacts' bucket.
+# Using a Job is the correct approach for a task that runs once to completion.
+apiVersion: batch/v1
+kind: Job
 metadata:
   name: minio-bucket-setup
   namespace: mlops
-  # THIS IS THE FIX: This annotation tells Istio not to inject its sidecar
-  # proxy into this specific pod, allowing it to complete its job and terminate.
-  annotations:
-    sidecar.istio.io/inject: "false"
 spec:
-  # The initContainer waits for the MinIO service to be fully healthy
-  # before the main mc-container starts. This prevents connection errors.
-  initContainers:
-  - name: wait-for-minio
-    image: busybox:1.36
-    command:
-      - "sh"
-      - "-c"
-      - |
-        echo "Waiting for MinIO service to be ready..."
-        # This command repeatedly tries to connect to MinIO's health endpoint.
-        # It will only succeed and allow the pod to continue once MinIO is fully active.
-        until wget -q --spider -T 10 http://minio:9000/minio/health/live; do
-          echo "MinIO not ready yet, sleeping for 5 seconds..."
-          sleep 5
-        done
-        echo "MinIO is ready! Proceeding with bucket setup."
-  containers:
-  - name: mc-container
-    image: minio/mc
-    command:
-      - "sh"
-      - "-c"
-      - |
-        set -ex
-        # Use credentials loaded from the secret to configure the client
-        mc alias set minio-cluster http://minio:9000 $AWS_ACCESS_KEY_ID $AWS_SECRET_ACCESS_KEY
-        
-        # Create the bucket, ignoring the error if it already exists
-        mc mb minio-cluster/mlflow-artifacts || echo "Bucket 'mlflow-artifacts' already exists."
-        
-        # Set a public-read policy so MLflow can easily access artifacts
-        mc policy set download minio-cluster/mlflow-artifacts
-        
-        echo "MinIO setup complete."
-    envFrom:
-    - secretRef:
-        # This loads the credentials (AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY)
-        # from the secret that the Jenkins pipeline creates.
-        name: aws-s3-credentials
-  restartPolicy: OnFailure
+  # The 'template' field describes the pod that the Job will create.
+  template:
+    metadata:
+      # This annotation tells Istio not to inject its sidecar
+      # proxy into the pod created by this Job.
+      annotations:
+        sidecar.istio.io/inject: "false"
+    spec:
+      # The initContainer waits for the MinIO service to be fully healthy
+      # before the main container starts. This prevents connection errors.
+      initContainers:
+      - name: wait-for-minio
+        image: busybox:1.36
+        command:
+          - "sh"
+          - "-c"
+          - |
+            echo "Waiting for MinIO service to be ready..."
+            until wget -q --spider -T 10 http://minio:9000/minio/health/live; do
+              echo "MinIO not ready yet, sleeping for 5 seconds..."
+              sleep 5
+            done
+            echo "MinIO is ready! Proceeding with bucket setup."
+      containers:
+      - name: mc-container
+        image: minio/mc
+        command:
+          - "sh"
+          - "-c"
+          - |
+            set -ex
+            # Use credentials loaded from the secret to configure the client
+            mc alias set minio-cluster http://minio:9000 $AWS_ACCESS_KEY_ID $AWS_SECRET_ACCESS_KEY
+            
+            # Create the bucket, ignoring the error if it already exists
+            mc mb minio-cluster/mlflow-artifacts || echo "Bucket 'mlflow-artifacts' already exists."
+            
+            # Set a public-read policy so MLflow can easily access artifacts
+            mc policy set download minio-cluster/mlflow-artifacts
+            
+            echo "MinIO setup complete."
+        envFrom:
+        - secretRef:
+            name: aws-s3-credentials
+      restartPolicy: OnFailure
+  # These settings ensure the job doesn't run for too long.
+  backoffLimit: 2
+  activeDeadlineSeconds: 120

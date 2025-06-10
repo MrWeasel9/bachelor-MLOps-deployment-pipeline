@@ -5,7 +5,7 @@ properties([
             defaultValue: false,
             description: 'Set to true to destroy all infrastructure (DANGER!)'
         ),
-        booleanParam( // Add this new parameter
+        booleanParam(
             name: 'SKIP_INFRA_INSTALL',
             defaultValue: false,
             description: 'Set to true to skip Terraform and RKE2 installation and go straight to Helm deployments.'
@@ -25,7 +25,7 @@ pipeline {
 
         stage('Terraform Init & Plan & Apply/Destroy') {
             when {
-                expression { !params.SKIP_INFRA_INSTALL } // Only run if SKIP_INFRA_INSTALL is false
+                expression { !params.SKIP_INFRA_INSTALL }
             }
             steps {
                 withCredentials([file(credentialsId: 'gcp-terraform-key', variable: 'GCLOUD_AUTH')]) {
@@ -56,7 +56,7 @@ pipeline {
 
         stage('Configure RKE2') {
             when {
-                expression { !params.DO_DESTROY && !params.SKIP_INFRA_INSTALL } // Only run if not destroying AND not skipping infra
+                expression { !params.DO_DESTROY && !params.SKIP_INFRA_INSTALL }
             }
             steps {
                 withCredentials([file(credentialsId: 'gcp-terraform-key', variable: 'GCLOUD_AUTH')]) {
@@ -85,7 +85,7 @@ pipeline {
 
         stage('Export kubeconfig for Local Use') {
             when {
-                expression { !params.DO_DESTROY && !params.SKIP_INFRA_INSTALL } // Only run if not destroying AND not skipping infra
+                expression { !params.DO_DESTROY && !params.SKIP_INFRA_INSTALL }
             }
             steps {
                 withCredentials([file(credentialsId: 'gcp-terraform-key', variable: 'GCLOUD_AUTH')]) {
@@ -115,9 +115,7 @@ pipeline {
         }
 
         stage('Configure kubectl context') {
-            when {
-                expression { !params.DO_DESTROY && !params.SKIP_INFRA_INSTALL } // Only run if not destroying AND not skipping infra
-            }
+            when { expression { !params.DO_DESTROY && !params.SKIP_INFRA_INSTALL } }
             steps {
                 sh '''
                 mkdir -p ~/.kube
@@ -129,13 +127,15 @@ pipeline {
         }
 
         stage('Remove rke2-ingress-nginx') {
-            when { expression { !params.DO_DESTROY } } // This stage can still run even if infra is skipped, as it deals with Kubernetes configuration.
+            when { expression { !params.DO_DESTROY } }
             steps {
                 sh '''
+                # This removes RKE2's default NGINX ingress if it exists.
                 gcloud compute ssh mlops-master --command="sudo mv /var/lib/rancher/rke2/server/manifests/rke2-ingress-nginx.yaml ~ || true"
                 kubectl delete pod -n kube-system -l app.kubernetes.io/name=ingress-nginx || true
                 helm uninstall rke2-ingress-nginx -n kube-system || true
 
+                # These iptables rules seem specific to an RKE2 network setup, keep them.
                 gcloud compute ssh mlops-master --command="sudo iptables -I INPUT -p udp --dport 8472 -j ACCEPT && sudo iptables -I FORWARD -p udp --dport 8472 -j ACCEPT"
                 gcloud compute ssh mlops-worker-1 --command="sudo iptables -I INPUT -p udp --dport 8472 -j ACCEPT && sudo iptables -I FORWARD -p udp --dport 8472 -j ACCEPT"
                 gcloud compute ssh mlops-worker-2 --command="sudo iptables -I INPUT -p udp --dport 8472 -j ACCEPT && sudo iptables -I FORWARD -p udp --dport 8472 -j ACCEPT"
@@ -143,25 +143,22 @@ pipeline {
             }
         }
 
-        /* ----------  TRAEFIK  ---------- */
-        stage('Install Traefik Ingress (NodePort)') {
+        /* ----------  NGINX INGRESS  ---------- */
+        stage('Install NGINX Ingress Controller (NodePort)') {
             when { expression { !params.DO_DESTROY } }
             steps {
                 sh '''
-                helm repo add traefik https://helm.traefik.io/traefik || true
+                helm repo add ingress-nginx https://kubernetes.github.io/ingress-nginx || true
                 helm repo update
 
-                # CRDs once
-                helm upgrade --install traefik-crds traefik/traefik-crds \\
-                    --namespace traefik --create-namespace \\
-                    --wait --timeout 120s
-
-                # Main chart (skip CRDs)
-                helm upgrade --install traefik traefik/traefik \\
-                    --namespace traefik --create-namespace \\
-                    --skip-crds \\
-                    -f services/traefik/values.yaml \\
-                    --wait --timeout 120s
+                helm upgrade --install ingress-nginx ingress-nginx/ingress-nginx \\
+                  --namespace ingress-nginx --create-namespace \\
+                  --set controller.service.type=NodePort \\
+                  --set controller.service.nodePorts.http=32255 \\
+                  --set controller.service.nodePorts.https=30594 \\
+                  --set controller.metrics.enabled=true \\
+                  --set controller.metrics.serviceMonitor.enabled=true \\
+                  --wait
                 '''
             }
         }
@@ -210,7 +207,9 @@ pipeline {
                     helm upgrade --install minio bitnami/minio \\
                     --namespace mlops \\
                     -f services/minio/values.yaml
-                    kubectl apply -f services/minio/ingressroute-minio.yaml
+
+                    # Apply MinIO Ingress for NGINX
+                    kubectl apply -f services/minio/minio-ingress.yaml
 
                     # PostgreSQL - Use postgres superuser with Jenkins password
                     helm upgrade --install postgresql bitnami/postgresql \\
@@ -224,7 +223,8 @@ pipeline {
 
                     # MLflow
                     kubectl apply -f services/mlflow/mlflow.yaml
-                    kubectl apply -f services/mlflow/ingressroute-mlflow.yaml
+                    # Apply MLflow Ingress for NGINX
+                    kubectl apply -f services/mlflow/mlflow-ingress.yaml
                 """
                 }
             }

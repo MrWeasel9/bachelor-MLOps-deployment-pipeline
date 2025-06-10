@@ -1,0 +1,24 @@
+    # services/mlflow/mlflow-ingress.yaml
+    apiVersion: networking.k8s.io/v1
+    kind: Ingress
+    metadata:
+      name: mlflow-ui-ingress
+      namespace: mlops
+      annotations:
+        # This annotation tells NGINX to rewrite the path, stripping /mlflow
+        nginx.ingress.kubernetes.io/rewrite-target: /$1
+        # Set ingress class for NGINX controller
+        kubernetes.io/ingress.class: nginx # Older versions use this; ingressClassName is preferred
+    spec:
+      ingressClassName: nginx # Explicitly use the NGINX Ingress Controller
+      rules:
+      - http:
+          paths:
+          - path: /mlflow/(.*) # Capture everything after /mlflow
+            pathType: Prefix # Use Prefix for path matching
+            backend:
+              service:
+                name: mlflow-service # Assuming your MLflow UI service name
+                port:
+                  number: 5000       # MLflow UI service's actual port
+    

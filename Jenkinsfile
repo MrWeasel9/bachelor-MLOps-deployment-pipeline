@@ -208,7 +208,11 @@ pipeline {
                     # MinIO
                     helm upgrade --install minio bitnami/minio \\
                     --namespace mlops \\
-                    -f services/minio/values.yaml
+                    -f services/minio/values.yaml \\
+                    --set "extraEnvVars[0].name=MINIO_BROWSER_REDIRECT_URL" \\
+                    --set "extraEnvVars[0].value=/minio/" \\
+                    --set "extraEnvVars[1].name=MINIO_SERVER_URL" \\
+                    --set "extraEnvVars[1].value=http://${MASTER_EXTERNAL_IP}:32255/minio"
 
                     # Apply MinIO Ingress for NGINX
                     kubectl apply -f services/minio/minio-ingress.yaml

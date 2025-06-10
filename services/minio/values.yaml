@@ -16,7 +16,3 @@ console:
   service:
     port: 9090 # Ensure this matches your minio-console service's actual port
 
-
-extraEnvVars:
-  - name: MINIO_BROWSER_REDIRECT_URL
-    value: "/minio/"

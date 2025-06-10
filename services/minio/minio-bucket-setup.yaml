@@ -5,8 +5,12 @@ kind: Pod
 metadata:
   name: minio-bucket-setup
   namespace: mlops
+  # THIS IS THE FIX: This annotation tells Istio not to inject its sidecar
+  # proxy into this specific pod, allowing it to complete its job and terminate.
+  annotations:
+    sidecar.istio.io/inject: "false"
 spec:
-  # NEW: An initContainer waits for the MinIO service to be fully healthy
+  # The initContainer waits for the MinIO service to be fully healthy
   # before the main mc-container starts. This prevents connection errors.
   initContainers:
   - name: wait-for-minio

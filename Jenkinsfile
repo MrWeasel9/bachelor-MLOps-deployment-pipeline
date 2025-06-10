@@ -144,6 +144,7 @@ pipeline {
         }
 
         /* ----------  NGINX INGRESS  ---------- */
+        // In your Jenkinsfile
         stage('Install NGINX Ingress Controller (NodePort)') {
             when { expression { !params.DO_DESTROY } }
             steps {
@@ -152,13 +153,12 @@ pipeline {
                 helm repo update
 
                 helm upgrade --install ingress-nginx ingress-nginx/ingress-nginx \\
-                  --namespace ingress-nginx --create-namespace \\
-                  --set controller.service.type=NodePort \\
-                  --set controller.service.nodePorts.http=32255 \\
-                  --set controller.service.nodePorts.https=30594 \\
-                  --set controller.metrics.enabled=true \\
-                  --set controller.metrics.serviceMonitor.enabled=true \\
-                  --wait
+                --namespace ingress-nginx --create-namespace \\
+                --set controller.service.type=NodePort \\
+                --set controller.service.nodePorts.http=32255 \\
+                --set controller.service.nodePorts.https=30594 \\
+                --set controller.metrics.enabled=true \\
+                --wait
                 '''
             }
         }

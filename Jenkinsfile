@@ -253,6 +253,7 @@ pipeline {
 
         /* ---------- KServe MODEL SERVING PLATFORM ---------- */
         /* ---------- KServe MODEL SERVING PLATFORM ---------- */
+        /* ---------- KServe MODEL SERVING PLATFORM ---------- */
         stage('Install KServe and Dependencies') {
             when { expression { !params.DO_DESTROY } }
             steps {
@@ -277,7 +278,7 @@ pipeline {
                     kubectl apply -f https://github.com/knative/serving/releases/download/knative-v1.14.0/serving-core.yaml
                     
                     echo "--- Waiting for Knative Serving webhooks to be ready ---"
-                    # THIS IS THE FIX: Wait for Knative deployments to become available before proceeding
+                    # Wait for Knative deployments to become available before proceeding
                     kubectl wait --for=condition=Available deployment --all --namespace=knative-serving --timeout=300s
 
                     # Apply the Istio networking layer for Knative
@@ -294,9 +295,11 @@ pipeline {
 
 
                     echo "--- 4. Installing KServe ---"
-                    # Apply the core KServe manifest and the cluster-wide runtimes
+                    # Apply the core KServe manifest
                     kubectl apply -f https://github.com/kserve/kserve/releases/download/v0.13.0/kserve.yaml
-                    kubectl apply -f https://github.com/kserve/kserve/releases/download/v0.13.0/kserve-runtimes.yaml
+
+                    # THIS IS THE FIX: Use the correct filename for cluster-wide resources
+                    kubectl apply -f https://github.com/kserve/kserve/releases/download/v0.13.0/kserve-cluster-resources.yaml
 
                     echo "--- KServe installation complete! ---"
                 '''

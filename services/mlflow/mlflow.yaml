@@ -39,18 +39,19 @@ spec:
               --host 0.0.0.0 \
               --port 5000 \
               --backend-store-uri "postgresql://mlflow:${POSTGRES_PASSWORD}@postgresql:5432/mlflow" \
-              --default-artifact-root "s3://minio/mlflow-artifacts"
+              # THIS IS THE FIX: The default artifact root now points to the correct
+              # bucket named 'mlflow-artifacts', not a bucket named 'minio'.
+              --default-artifact-root "s3://mlflow-artifacts"
         ports:
         - containerPort: 5000
-        # ---- Ensure the following blocks are correctly indented under 'containers' ----
         env:
         - name: POSTGRES_PASSWORD
           valueFrom:
             secretKeyRef:
               name: postgresql
               key: postgres-password
-        - name: MLFLOW_S3_ENDPOINT_URL
-          value: "http://minio:9000"
+        # The aws-s3-credentials secret is mounted for the mlflow server itself
+        # in case it needs to access MinIO directly.
         envFrom:
         - secretRef:
             name: aws-s3-credentials

@@ -325,6 +325,7 @@ pipeline {
         // --- THIS IS THE NEW AUTOMATED CI/CD STAGE FOR MODELS ---
         // --- THIS IS THE NEW AUTOMATED CI/CD STAGE FOR MODELS ---
         // --- THIS STAGE IS UPDATED WITH MORE ROBUST ERROR HANDLING ---
+        // --- THIS STAGE IS UPDATED WITH HIGHLY ROBUST ERROR HANDLING ---
         stage('Train, Build, and Deploy Model') {
             when { expression { params.DEPLOY_NEW_MODEL } }
             steps {
@@ -342,27 +343,28 @@ pipeline {
                         sh "kubectl delete job model-training-job -n mlops --ignore-not-found=true"
                         sh "kubectl apply -f services/training/trainer-job.yaml"
                         
-                        // THIS IS THE FIX: This block now reliably catches failures and prints useful debug info.
-                        try {
-                            // Let this command throw an exception on failure
-                            sh "kubectl wait --for=condition=complete job/model-training-job -n mlops --timeout=300s"
-                        } catch (any) {
-                            echo "!!! Training job failed. Fetching events and logs for debugging. !!!"
+                        // THIS IS THE FIX: This new polling logic will reliably capture the error.
+                        timeout(time: 5, unit: 'MINUTES') {
+                            // Loop until the job succeeds or fails
+                            while (true) {
+                                def succeeded = sh(script: "kubectl get job model-training-job -n mlops -o jsonpath='{.status.succeeded}'", returnStdout: true).trim()
+                                def failed = sh(script: "kubectl get job model-training-job -n mlops -o jsonpath='{.status.failed}'", returnStdout: true).trim()
 
-                            // First, describe the job to see why it might have failed to create a pod.
-                            sh "echo '--- DESCRIBE FAILED JOB ---'; kubectl describe job model-training-job -n mlops; echo '--- END OF DESCRIPTION ---'"
+                                if (succeeded == '1') {
+                                    echo "Training job completed successfully."
+                                    break // Exit the loop
+                                }
 
-                            // Then, safely try to get the pod name and its logs.
-                            def podName = sh(script: "kubectl get pods -n mlops -l job-name=model-training-job -o jsonpath='{.items[0].metadata.name}' --ignore-not-found=true", returnStdout: true).trim()
-                            
-                            if (podName) {
-                                sh "echo '--- LOGS FROM FAILED POD ${podName} ---'; kubectl logs ${podName} -n mlops -c trainer; echo '--- END OF LOGS ---'"
-                            } else {
-                                echo "Could not find a pod for the failed job. The job may have failed to schedule. See job description above."
+                                if (failed == '1') {
+                                    echo "!!! Training job failed. Fetching logs for debugging. !!!"
+                                    def podName = sh(script: "kubectl get pods -n mlops -l job-name=model-training-job -o jsonpath='{.items[0].metadata.name}'", returnStdout: true).trim()
+                                    sh "echo '--- LOGS FROM FAILED POD ${podName} ---'; kubectl logs ${podName} -n mlops -c trainer; echo '--- END OF LOGS ---'"
+                                    error "Training job failed. See logs above for the Python error."
+                                }
+                                
+                                echo "Training job still running..."
+                                sleep(10) // Wait 10 seconds before checking again
                             }
-                            
-                            // Re-throw the error to ensure the build is marked as failed.
-                            error "Training job failed to complete. See events and logs above for details."
                         }
                         
                         echo "--- Fetching new run ID from result file ---"

@@ -1,3 +1,4 @@
+# This manifest defines a Kubernetes Job to run the model training scripts.
 apiVersion: batch/v1
 kind: Job
 metadata:
@@ -23,7 +24,8 @@ spec:
             set -ex
             echo "--- Running hyperparameter tuning ---"
             python /scripts/hyperparameter_tuning.py
-            echo "--- Training complete ---"
+            # THIS IS THE FIX: The "echo 'Training complete'" line has been removed
+            # to ensure the run ID is the last line of output.
         envFrom:
         - secretRef:
             name: aws-s3-credentials

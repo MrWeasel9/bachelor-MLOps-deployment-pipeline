@@ -320,6 +320,27 @@ pipeline {
                 '''
             }
         }
+
+        stage('Build and Push Trainer Image') {
+            // This stage only runs if files in the 'services/training' directory have changed.
+            when { changeset "services/training/**" }
+            steps {
+                withCredentials([
+                    usernamePassword(credentialsId: 'dockerhub-creds', usernameVariable: 'DOCKER_USERNAME', passwordVariable: 'DOCKER_PASSWORD')
+                ]) {
+                    script {
+                        def TRAINER_IMAGE_NAME = "${DOCKER_USERNAME}/mlops-trainer:latest"
+                        
+                        echo "--- Building and pushing new trainer image: ${TRAINER_IMAGE_NAME} ---"
+                        dir('services/training') {
+                            sh "docker build -t ${TRAINER_IMAGE_NAME} ."
+                            sh "echo '${DOCKER_PASSWORD}' | docker login --username '${DOCKER_USERNAME}' --password-stdin"
+                            sh "docker push ${TRAINER_IMAGE_NAME}"
+                        }
+                    }
+                }
+            }
+        }
         
 
         // --- THIS IS THE NEW AUTOMATED CI/CD STAGE FOR MODELS ---
@@ -342,15 +363,19 @@ pipeline {
                         sh "kubectl apply -f services/training/trainer-job.yaml"
                         sh "kubectl wait --for=condition=complete job/model-training-job -n mlops --timeout=300s"
                         
-                        echo "--- Fetching new run ID from result file ---"
+                        echo "--- Fetching new run ID from training logs ---"
                         def trainingPodName = sh(script: "kubectl get pods -n mlops -l job-name=model-training-job -o jsonpath='{.items[0].metadata.name}'", returnStdout: true).trim()
                         
-                        // This will now succeed because the completed pod still exists.
-                        sh "kubectl cp -n mlops ${trainingPodName}:/tmp/run_id.txt ./run_id.txt"
-                        def newRunId = readFile('run_id.txt').trim()
+                        // THIS IS THE FIX: Capture the full log output from the completed pod.
+                        def logs = sh(script: "kubectl logs ${trainingPodName} -n mlops -c trainer", returnStdout: true).trim()
+                        
+                        // The run ID is now the last line of the script's output.
+                        def logLines = logs.split('\\n')
+                        def newRunId = logLines.last().trim()
 
-                        if (!newRunId) {
-                            error "Could not retrieve a valid Run ID from the training job."
+                        // A quick check to ensure the ID looks valid (is a 32-character hex string)
+                        if (!newRunId || !newRunId.matches('[a-f0-9]{32}')) {
+                            error "Could not retrieve a valid Run ID from the training job logs. Full Logs:\n${logs}"
                         }
                         echo "Found new Run ID: ${newRunId}"
 
@@ -377,9 +402,8 @@ pipeline {
 
                         // --- 4. Cleanup ---
                         echo "--- Cleaning up temporary files and jobs ---"
-                        sh "rm temp-builder-job.yaml temp-inference-service.yaml run_id.txt"
+                        sh "rm temp-builder-job.yaml temp-inference-service.yaml"
                         sh "kubectl delete configmap training-scripts -n mlops"
-                        // The training job is now deleted here, after we have the run ID.
                         sh "kubectl delete job model-training-job -n mlops"
                         sh "kubectl delete job model-builder-job -n mlops"
                     }

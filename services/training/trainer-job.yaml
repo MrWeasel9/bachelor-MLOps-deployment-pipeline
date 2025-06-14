@@ -30,7 +30,6 @@ spec:
             echo "--- Training complete ---"
         envFrom:
         - secretRef:
-            # THIS IS THE FIX: Changed the invalid secret name back to the correct one.
             name: aws-s3-credentials
         env:
         - name: MLFLOW_TRACKING_URI
@@ -44,8 +43,7 @@ spec:
       - name: scripts-volume
         configMap:
           name: training-scripts
-      # THIS IS THE FIX: Change the restart policy to 'Never'.
-      # This will keep the pod around after it fails, so we can get its logs.
-      restartPolicy: Never
+      # Revert to the default restart policy now that debugging is complete.
+      restartPolicy: OnFailure
   backoffLimit: 1
   activeDeadlineSeconds: 300

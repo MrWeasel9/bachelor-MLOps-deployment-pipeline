@@ -340,20 +340,40 @@ pipeline {
                         echo "--- Starting model training job ---"
                         sh "kubectl delete job model-training-job -n mlops --ignore-not-found=true"
                         sh "kubectl apply -f services/training/trainer-job.yaml"
-                        sh "kubectl wait --for=condition=complete job/model-training-job -n mlops --timeout=300s"
+                        
+                        // THIS IS THE FIX: This block now reliably catches failures and prints logs.
+                        try {
+                            // Use returnStatus: true to prevent the pipeline halting on a non-zero exit code.
+                            def status = sh(script: "kubectl wait --for=condition=complete job/model-training-job -n mlops --timeout=300s", returnStatus: true)
+                            if (status != 0) {
+                                // If status is not 0, the wait command failed or timed out.
+                                // We manually throw an error to trigger the catch block.
+                                error "Training job failed to complete or timed out."
+                            }
+                        } catch (any) {
+                            // This block will now reliably execute on failure.
+                            echo "!!! Training job failed. Fetching logs for debugging. !!!"
+                            def podName = sh(script: "kubectl get pods -n mlops -l job-name=model-training-job -o jsonpath='{.items[0].metadata.name}'", returnStdout: true).trim()
+                            if (podName) {
+                                // Print the logs from the failed pod.
+                                sh "echo '--- LOGS FROM FAILED POD ${podName} ---'; kubectl logs ${podName} -n mlops -c trainer; echo '--- END OF LOGS ---'"
+                            }
+                            // Re-throw the error to ensure the build is marked as failed.
+                            error "Training job failed to complete. See logs above for details."
+                        }
                         
                         echo "--- Fetching new run ID from result file ---"
                         def trainingPodName = sh(script: "kubectl get pods -n mlops -l job-name=model-training-job -o jsonpath='{.items[0].metadata.name}'", returnStdout: true).trim()
-                        
                         sh "kubectl cp -n mlops ${trainingPodName}:/tmp/run_id.txt ./run_id.txt"
                         def newRunId = readFile('run_id.txt').trim()
 
                         if (!newRunId) {
-                            error "Could not retrieve a valid Run ID from the training job."
+                            error "Could not retrieve a valid Run ID from the training job's result file."
                         }
                         echo "Found new Run ID: ${newRunId}"
 
                         // --- 2. Build Image ---
+                        // (The rest of the stage remains the same)
                         echo "--- Starting model builder job for Run ID: ${newRunId} ---"
                         def builderManifest = readFile('services/training/builder-job.yaml')
                         builderManifest = builderManifest.replace('<RUN_ID_PLACEHOLDER>', newRunId) 
@@ -369,7 +389,7 @@ pipeline {
                         // --- 3. Deploy to KServe ---
                         echo "--- Deploying image ${DOCKER_IMAGE_NAME} to KServe ---"
                         def inferenceManifest = readFile('services/kserve/inference-service.yaml')
-                        inferenceManifest = inferenceManifest.replace('<DOCKER_IMAGE_NAME>', DOCKER_IMAGE_NAME)
+                        inferenceManifest = inferenceManifest.replace('<DOCKER_IMAGE_NAME>', DOCKER_IMAGE_.replace('/', '\\/'))
                         
                         writeFile(file: 'temp-inference-service.yaml', text: inferenceManifest)
                         sh "kubectl apply -f temp-inference-service.yaml"

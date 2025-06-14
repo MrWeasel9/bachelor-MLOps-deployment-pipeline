@@ -14,7 +14,7 @@ spec:
       initContainers:
       - name: wait-for-mlflow
         image: busybox:1.36
-        command: ["sh", "-c", "echo 'Waiting for MLflow...' && until wget -q --spider -T 10 http://mlflow:5000/health; do sleep 5; done && echo 'MLflow is ready!'"]
+        command: ["sh", "-c", "echo 'Waiting for MLflow...' && until nc -z -w 5 mlflow 5000; do sleep 5; done && echo 'MLflow is ready!'"]
       containers:
       - name: trainer
         image: python:3.10-slim
@@ -30,7 +30,7 @@ spec:
             echo "--- Training complete ---"
         envFrom:
         - secretRef:
-            name: aws-s3-credentials
+            name: aws-s_s3_credentials
         env:
         - name: MLFLOW_TRACKING_URI
           value: "http://mlflow:5000"
@@ -43,7 +43,8 @@ spec:
       - name: scripts-volume
         configMap:
           name: training-scripts
-      # Revert to the default restart policy now that debugging is complete.
-      restartPolicy: OnFailure
+      # THIS IS THE FIX: Change the restart policy to 'Never'.
+      # This will keep the pod around after it fails, so we can get its logs.
+      restartPolicy: Never
   backoffLimit: 1
   activeDeadlineSeconds: 300

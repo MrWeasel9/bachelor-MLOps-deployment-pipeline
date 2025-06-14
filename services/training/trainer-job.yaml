@@ -17,14 +17,14 @@ spec:
         command: ["sh", "-c", "echo 'Waiting for MLflow...' && until nc -z -w 5 mlflow 5000; do sleep 5; done && echo 'MLflow is ready!'"]
       containers:
       - name: trainer
-        image: python:3.10-slim
+        # This is the key change: Use your custom image with pre-installed dependencies.
+        image: mrweasel99/mlops-trainer:latest
         command:
           - "sh"
           - "-c"
           - |
             set -ex
-            # Add boto3 to the list of installed packages.
-            pip install "mlflow[mlserver]==2.14.3" scikit-learn boto3
+            # The 'pip install' command is now removed.
             echo "--- Running hyperparameter tuning ---"
             python /scripts/hyperparameter_tuning.py
             echo "--- Training complete ---"
@@ -43,7 +43,6 @@ spec:
       - name: scripts-volume
         configMap:
           name: training-scripts
-      # Revert to the default restart policy now that debugging is complete.
       restartPolicy: OnFailure
   backoffLimit: 1
   activeDeadlineSeconds: 300

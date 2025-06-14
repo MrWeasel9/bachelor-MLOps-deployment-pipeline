@@ -24,7 +24,6 @@ spec:
           - |
             set -ex
             pip install "mlflow[mlserver]==2.14.3" scikit-learn
-            # This script will now be pulled from your updated local file
             echo "--- Running hyperparameter tuning ---"
             python /scripts/hyperparameter_tuning.py
             echo "--- Training complete ---"
@@ -32,7 +31,6 @@ spec:
         - secretRef:
             name: aws-s3-credentials
         env:
-        # These environment variables are passed to the python scripts
         - name: MLFLOW_TRACKING_URI
           value: "http://mlflow:5000"
         - name: MLFLOW_S3_ENDPOINT_URL
@@ -44,6 +42,8 @@ spec:
       - name: scripts-volume
         configMap:
           name: training-scripts
-      restartPolicy: OnFailure
+      # THIS IS THE FIX: Change the restart policy to 'Never'.
+      # This will keep the pod around after it fails, so we can get its logs.
+      restartPolicy: Never
   backoffLimit: 1
   activeDeadlineSeconds: 300

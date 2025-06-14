@@ -62,33 +62,53 @@ pipeline {
         }
 
         stage('Configure RKE2') {
-            when {
-                expression { !params.DO_DESTROY && !params.SKIP_INFRA_INSTALL }
-            }
-            steps {
-                withCredentials([file(credentialsId: 'gcp-terraform-key', variable: 'GCLOUD_AUTH')]) {
-                    sh """
-                        gcloud auth activate-service-account --key-file=\$GCLOUD_AUTH
-                        gcloud config set project bachelors-project-461620
-                        gcloud config set compute/zone europe-central2-a
+    when {
+        expression { !params.DO_DESTROY && !params.SKIP_INFRA_INSTALL }
+    }
+    steps {
+        withCredentials([file(credentialsId: 'gcp-terraform-key', variable: 'GCLOUD_AUTH')]) {
+            sh """
+                gcloud auth activate-service-account --key-file=\$GCLOUD_AUTH
+                gcloud config set project bachelors-project-461620
+                gcloud config set compute/zone europe-central2-a
 
-                        # Ensure /etc/rancher/rke2 exists before writing config.yaml
-                        gcloud compute ssh mlops-master --command="sudo mkdir -p /etc/rancher/rke2"
-                        gcloud compute ssh mlops-master --command="echo -e 'tls-san:\\n  - ${MASTER_EXTERNAL_IP}' | sudo tee /etc/rancher/rke2/config.yaml"
+                # ... (existing commands for master setup) ...
+                gcloud compute ssh mlops-master --command="echo -e 'tls-san:\\n  - ${MASTER_EXTERNAL_IP}' | sudo tee /etc/rancher/rke2/config.yaml"
+                gcloud compute ssh mlops-master --command="curl -sfL https://get.rke2.io | sudo sh - && sudo systemctl enable rke2-server && sudo systemctl restart rke2-server"
 
-                        # Master install and restart for cert regeneration
-                        gcloud compute ssh mlops-master --command="curl -sfL https://get.rke2.io | sudo sh - && sudo systemctl enable rke2-server && sudo systemctl restart rke2-server"
+                sleep 180
 
-                        sleep 180
+                NODE_TOKEN=\$(gcloud compute ssh mlops-master --command='sudo cat /var/lib/rancher/rke2/server/node-token' --quiet)
 
-                        NODE_TOKEN=\$(gcloud compute ssh mlops-master --command='sudo cat /var/lib/rancher/rke2/server/node-token' --quiet)
+                # --- FIX: INSTALL DOCKER ON WORKER NODES ---
+                echo "--- Installing Docker on worker nodes ---"
+                for worker in mlops-worker-1 mlops-worker-2
+                do
+                  gcloud compute ssh \$worker --command="""
+                    sudo apt-get update
+                    sudo apt-get install -y ca-certificates curl
+                    sudo install -m 0755 -d /etc/apt/keyrings
+                    sudo curl -fsSL https://download.docker.com/linux/debian/gpg -o /etc/apt/keyrings/docker.asc
+                    sudo chmod a+r /etc/apt/keyrings/docker.asc
+                    echo \\
+                      "deb [arch=\$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.asc] https://download.docker.com/linux/debian \\
+                      \$(. /etc/os-release && echo "\$VERSION_CODENAME") stable" | \\
+                      sudo tee /etc/apt/sources.list.d/docker.list > /dev/null
+                    sudo apt-get update
+                    sudo apt-get install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
+                    sudo systemctl enable docker
+                    sudo systemctl start docker
+                  """
+                done
+                # --- END OF FIX ---
 
-                        gcloud compute ssh mlops-worker-1 --command="curl -sfL https://get.rke2.io | sudo sh - && sudo mkdir -p /etc/rancher/rke2 && echo -e 'server: https://${MASTER_INTERNAL_IP}:9345\\ntoken: \$NODE_TOKEN' | sudo tee /etc/rancher/rke2/config.yaml && sudo systemctl enable rke2-agent && sudo systemctl start rke2-agent"
-                        gcloud compute ssh mlops-worker-2 --command="curl -sfL https://get.rke2.io | sudo sh - && sudo mkdir -p /etc/rancher/rke2 && echo -e 'server: https://${MASTER_INTERNAL_IP}:9345\\ntoken: \$NODE_TOKEN' | sudo tee /etc/rancher/rke2/config.yaml && sudo systemctl enable rke2-agent && sudo systemctl start rke2-agent"
-                    """
-                }
-            }
+                # ... (existing commands for agent setup) ...
+                gcloud compute ssh mlops-worker-1 --command="curl -sfL https://get.rke2.io | sudo sh - && sudo mkdir -p /etc/rancher/rke2 && echo -e 'server: https://${MASTER_INTERNAL_IP}:9345\\ntoken: \$NODE_TOKEN' | sudo tee /etc/rancher/rke2/config.yaml && sudo systemctl enable rke2-agent && sudo systemctl start rke2-agent"
+                gcloud compute ssh mlops-worker-2 --command="curl -sfL https://get.rke2.io | sudo sh - && sudo mkdir -p /etc/rancher/rke2 && echo -e 'server: https://${MASTER_INTERNAL_IP}:9345\\ntoken: \$NODE_TOKEN' | sudo tee /etc/rke2/config.yaml && sudo systemctl enable rke2-agent && sudo systemctl start rke2-agent"
+            """
         }
+    }
+}
 
         stage('Export kubeconfig for Local Use') {
             when {

@@ -324,6 +324,7 @@ pipeline {
 
         // --- THIS IS THE NEW AUTOMATED CI/CD STAGE FOR MODELS ---
         // --- THIS IS THE NEW AUTOMATED CI/CD STAGE FOR MODELS ---
+        // --- THIS STAGE IS UPDATED WITH MORE ROBUST ERROR HANDLING ---
         stage('Train, Build, and Deploy Model') {
             when { expression { params.DEPLOY_NEW_MODEL } }
             steps {
@@ -341,25 +342,27 @@ pipeline {
                         sh "kubectl delete job model-training-job -n mlops --ignore-not-found=true"
                         sh "kubectl apply -f services/training/trainer-job.yaml"
                         
-                        // THIS IS THE FIX: This block now reliably catches failures and prints logs.
+                        // THIS IS THE FIX: This block now reliably catches failures and prints useful debug info.
                         try {
-                            // Use returnStatus: true to prevent the pipeline halting on a non-zero exit code.
-                            def status = sh(script: "kubectl wait --for=condition=complete job/model-training-job -n mlops --timeout=300s", returnStatus: true)
-                            if (status != 0) {
-                                // If status is not 0, the wait command failed or timed out.
-                                // We manually throw an error to trigger the catch block.
-                                error "Training job failed to complete or timed out."
-                            }
+                            // Let this command throw an exception on failure
+                            sh "kubectl wait --for=condition=complete job/model-training-job -n mlops --timeout=300s"
                         } catch (any) {
-                            // This block will now reliably execute on failure.
-                            echo "!!! Training job failed. Fetching logs for debugging. !!!"
-                            def podName = sh(script: "kubectl get pods -n mlops -l job-name=model-training-job -o jsonpath='{.items[0].metadata.name}'", returnStdout: true).trim()
+                            echo "!!! Training job failed. Fetching events and logs for debugging. !!!"
+
+                            // First, describe the job to see why it might have failed to create a pod.
+                            sh "echo '--- DESCRIBE FAILED JOB ---'; kubectl describe job model-training-job -n mlops; echo '--- END OF DESCRIPTION ---'"
+
+                            // Then, safely try to get the pod name and its logs.
+                            def podName = sh(script: "kubectl get pods -n mlops -l job-name=model-training-job -o jsonpath='{.items[0].metadata.name}' --ignore-not-found=true", returnStdout: true).trim()
+                            
                             if (podName) {
-                                // Print the logs from the failed pod.
                                 sh "echo '--- LOGS FROM FAILED POD ${podName} ---'; kubectl logs ${podName} -n mlops -c trainer; echo '--- END OF LOGS ---'"
+                            } else {
+                                echo "Could not find a pod for the failed job. The job may have failed to schedule. See job description above."
                             }
+                            
                             // Re-throw the error to ensure the build is marked as failed.
-                            error "Training job failed to complete. See logs above for details."
+                            error "Training job failed to complete. See events and logs above for details."
                         }
                         
                         echo "--- Fetching new run ID from result file ---"
@@ -389,7 +392,7 @@ pipeline {
                         // --- 3. Deploy to KServe ---
                         echo "--- Deploying image ${DOCKER_IMAGE_NAME} to KServe ---"
                         def inferenceManifest = readFile('services/kserve/inference-service.yaml')
-                        inferenceManifest = inferenceManifest.replace('<DOCKER_IMAGE_NAME>', DOCKER_IMAGE_.replace('/', '\\/'))
+                        inferenceManifest = inferenceManifest.replace('<DOCKER_IMAGE_NAME>', DOCKER_IMAGE_NAME)
                         
                         writeFile(file: 'temp-inference-service.yaml', text: inferenceManifest)
                         sh "kubectl apply -f temp-inference-service.yaml"

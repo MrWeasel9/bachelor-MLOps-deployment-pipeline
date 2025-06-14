@@ -6,11 +6,9 @@ metadata:
   name: minio-bucket-setup
   namespace: mlops
 spec:
-  # The 'template' field describes the pod that the Job will create.
   template:
     metadata:
-      # This annotation tells Istio not to inject its sidecar
-      # proxy into the pod created by this Job.
+      # This annotation tells Istio not to inject its sidecar proxy.
       annotations:
         sidecar.istio.io/inject: "false"
     spec:
@@ -19,16 +17,7 @@ spec:
       initContainers:
       - name: wait-for-minio
         image: busybox:1.36
-        command:
-          - "sh"
-          - "-c"
-          - |
-            echo "Waiting for MinIO service to be ready..."
-            until wget -q --spider -T 10 http://minio:9000/minio/health/live; do
-              echo "MinIO not ready yet, sleeping for 5 seconds..."
-              sleep 5
-            done
-            echo "MinIO is ready! Proceeding with bucket setup."
+        command: ["sh", "-c", "echo 'Waiting for MinIO...' && until wget -q --spider -T 10 http://minio:9000/minio/health/live; do sleep 5; done && echo 'MinIO is ready!'"]
       containers:
       - name: mc-container
         image: minio/mc
@@ -43,14 +32,13 @@ spec:
             # Create the bucket, ignoring the error if it already exists
             mc mb minio-cluster/mlflow-artifacts || echo "Bucket 'mlflow-artifacts' already exists."
             
-            # Set a public-read policy so MLflow can easily access artifacts
-            mc policy set download minio-cluster/mlflow-artifacts
+            # THIS IS THE FIX: Set a read-write policy so MLflow can upload artifacts.
+            mc policy set readwrite minio-cluster/mlflow-artifacts
             
             echo "MinIO setup complete."
         envFrom:
         - secretRef:
             name: aws-s3-credentials
       restartPolicy: OnFailure
-  # These settings ensure the job doesn't run for too long.
   backoffLimit: 2
   activeDeadlineSeconds: 120

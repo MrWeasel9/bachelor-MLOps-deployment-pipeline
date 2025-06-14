@@ -23,7 +23,7 @@ spec:
           - "-c"
           - |
             set -ex
-            # THIS IS THE FIX: Add boto3 to the list of installed packages.
+            # Add boto3 to the list of installed packages.
             pip install "mlflow[mlserver]==2.14.3" scikit-learn boto3
             echo "--- Running hyperparameter tuning ---"
             python /scripts/hyperparameter_tuning.py
@@ -43,7 +43,7 @@ spec:
       - name: scripts-volume
         configMap:
           name: training-scripts
-      # Keep restartPolicy: Never for now, as it aids in debugging if other issues arise.
-      restartPolicy: Never
+      # Revert to the default restart policy now that debugging is complete.
+      restartPolicy: OnFailure
   backoffLimit: 1
   activeDeadlineSeconds: 300

@@ -323,9 +323,7 @@ pipeline {
         
 
         // --- THIS IS THE NEW AUTOMATED CI/CD STAGE FOR MODELS ---
-        // --- THIS IS THE NEW AUTOMATED CI/CD STAGE FOR MODELS ---
-        // --- THIS STAGE IS UPDATED WITH MORE ROBUST ERROR HANDLING ---
-        // --- THIS STAGE IS UPDATED WITH HIGHLY ROBUST ERROR HANDLING ---
+        
         stage('Train, Build, and Deploy Model') {
             when { expression { params.DEPLOY_NEW_MODEL } }
             steps {
@@ -344,19 +342,15 @@ pipeline {
                         sh "kubectl apply -f services/training/trainer-job.yaml"
                         sh "kubectl wait --for=condition=complete job/model-training-job -n mlops --timeout=300s"
                         
-                        echo "--- Fetching new run ID from training logs ---"
+                        echo "--- Fetching new run ID from result file ---"
                         def trainingPodName = sh(script: "kubectl get pods -n mlops -l job-name=model-training-job -o jsonpath='{.items[0].metadata.name}'", returnStdout: true).trim()
                         
-                        // THIS IS THE FIX: Capture the full log output.
-                        def logs = sh(script: "kubectl logs ${trainingPodName} -n mlops -c trainer", returnStdout: true).trim()
-                        
-                        // The run ID is now the last line of the log.
-                        def logLines = logs.split('\\n')
-                        def newRunId = logLines.last().trim()
+                        // This will now succeed because the completed pod still exists.
+                        sh "kubectl cp -n mlops ${trainingPodName}:/tmp/run_id.txt ./run_id.txt"
+                        def newRunId = readFile('run_id.txt').trim()
 
-                        // A quick check to ensure the ID looks valid
-                        if (!newRunId || !newRunId.matches('[a-f0-9]{32}')) {
-                            error "Could not retrieve a valid Run ID from the training job logs. Last line was: '${newRunId}'"
+                        if (!newRunId) {
+                            error "Could not retrieve a valid Run ID from the training job."
                         }
                         echo "Found new Run ID: ${newRunId}"
 
@@ -383,8 +377,9 @@ pipeline {
 
                         // --- 4. Cleanup ---
                         echo "--- Cleaning up temporary files and jobs ---"
-                        sh "rm temp-builder-job.yaml temp-inference-service.yaml"
+                        sh "rm temp-builder-job.yaml temp-inference-service.yaml run_id.txt"
                         sh "kubectl delete configmap training-scripts -n mlops"
+                        // The training job is now deleted here, after we have the run ID.
                         sh "kubectl delete job model-training-job -n mlops"
                         sh "kubectl delete job model-builder-job -n mlops"
                     }

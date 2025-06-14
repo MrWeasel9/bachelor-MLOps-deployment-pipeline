@@ -1,5 +1,3 @@
-# This manifest defines a Kubernetes Job to create the 'mlflow-artifacts' bucket.
-# Using a Job is the correct approach for a task that runs once to completion.
 apiVersion: batch/v1
 kind: Job
 metadata:
@@ -8,14 +6,13 @@ metadata:
 spec:
   template:
     metadata:
-      # This annotation tells Istio not to inject its sidecar proxy.
       annotations:
         sidecar.istio.io/inject: "false"
     spec:
       initContainers:
       - name: wait-for-minio
         image: busybox:1.36
-        command: ["sh", "-c", "echo 'Waiting for MinIO...' && until wget -q --spider -T 10 http://minio:9000/minio/health/live; do sleep 5; done && echo 'MinIO is ready!'"]
+        command: ["sh", "-c", "echo 'Waiting for MinIO...' && until nc -z -w 5 minio 9000; do sleep 5; done && echo 'MinIO is ready!'"]
       containers:
       - name: mc-container
         image: minio/mc
@@ -24,15 +21,9 @@ spec:
           - "-c"
           - |
             set -ex
-            # Use credentials loaded from the secret to configure the client
             mc alias set minio-cluster http://minio:9000 $AWS_ACCESS_KEY_ID $AWS_SECRET_ACCESS_KEY
-            
-            # Create the bucket, ignoring the error if it already exists
             mc mb minio-cluster/mlflow-artifacts || echo "Bucket 'mlflow-artifacts' already exists."
-            
-            # THIS IS THE FIX: Set a read-write policy so MLflow can upload artifacts.
             mc policy set readwrite minio-cluster/mlflow-artifacts
-            
             echo "MinIO setup complete."
         envFrom:
         - secretRef:

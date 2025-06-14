@@ -1,4 +1,3 @@
-# This manifest defines a Kubernetes Job to run the model training scripts.
 apiVersion: batch/v1
 kind: Job
 metadata:
@@ -7,7 +6,6 @@ metadata:
 spec:
   template:
     metadata:
-      # This annotation tells Istio not to inject its sidecar proxy.
       annotations:
         sidecar.istio.io/inject: "false"
     spec:
@@ -17,14 +15,12 @@ spec:
         command: ["sh", "-c", "echo 'Waiting for MLflow...' && until nc -z -w 5 mlflow 5000; do sleep 5; done && echo 'MLflow is ready!'"]
       containers:
       - name: trainer
-        # This is the key change: Use your custom image with pre-installed dependencies.
         image: mrweasel99/mlops-trainer:latest
         command:
           - "sh"
           - "-c"
           - |
             set -ex
-            # The 'pip install' command is now removed.
             echo "--- Running hyperparameter tuning ---"
             python /scripts/hyperparameter_tuning.py
             echo "--- Training complete ---"

@@ -12,30 +12,25 @@ spec:
         sidecar.istio.io/inject: "false"
     spec:
       initContainers:
-      # THIS IS THE FIX: This initContainer now also ensures the MinIO bucket
-      # exists and has the correct read/write permissions before training starts.
       - name: setup-environment
-        image: minio/mc
+        # The busybox image contains the 'nc' (netcat) utility
+        image: busybox:1.36
         command:
           - "sh"
           - "-c"
           - |
             set -ex
-            echo "Waiting for MLflow service..."
-            until wget -q --spider -T 10 http://mlflow:5000/health; do
-              echo "MLflow not ready yet, sleeping for 5 seconds..."
+            echo "Waiting for MLflow service to be ready..."
+            # THIS IS THE FIX: Use netcat (nc) to check if the port is open, which is more reliable
+            # than checking for a specific HTTP path that may not exist.
+            until nc -z -w 5 mlflow 5000; do
+              echo "MLflow service not reachable yet, sleeping for 5 seconds..."
               sleep 5
             done
             echo "MLflow is ready!"
 
-            echo "Configuring MinIO client and setting bucket policy..."
-            mc alias set minio-cluster http://minio:9000 $AWS_ACCESS_KEY_ID $AWS_SECRET_ACCESS_KEY
-            mc mb minio-cluster/mlflow-artifacts || echo "Bucket 'mlflow-artifacts' already exists."
-            mc policy set readwrite minio-cluster/mlflow-artifacts
-            echo "MinIO bucket 'mlflow-artifacts' is correctly configured with read/write access."
-        envFrom:
-        - secretRef:
-            name: aws-s3-credentials
+            # The MinIO setup part is removed as it's now handled by the Deploy MLOps stage.
+            # If needed, it could be a separate initContainer using minio/mc.
       containers:
       - name: trainer
         image: python:3.10-slim
@@ -64,7 +59,6 @@ spec:
       - name: scripts-volume
         configMap:
           name: training-scripts
-      # Revert to the default restart policy now that debugging is complete.
       restartPolicy: OnFailure
   backoffLimit: 1
   activeDeadlineSeconds: 300

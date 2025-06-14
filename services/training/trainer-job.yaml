@@ -12,25 +12,9 @@ spec:
         sidecar.istio.io/inject: "false"
     spec:
       initContainers:
-      - name: setup-environment
-        # The busybox image contains the 'nc' (netcat) utility
+      - name: wait-for-mlflow
         image: busybox:1.36
-        command:
-          - "sh"
-          - "-c"
-          - |
-            set -ex
-            echo "Waiting for MLflow service to be ready..."
-            # THIS IS THE FIX: Use netcat (nc) to check if the port is open, which is more reliable
-            # than checking for a specific HTTP path that may not exist.
-            until nc -z -w 5 mlflow 5000; do
-              echo "MLflow service not reachable yet, sleeping for 5 seconds..."
-              sleep 5
-            done
-            echo "MLflow is ready!"
-
-            # The MinIO setup part is removed as it's now handled by the Deploy MLOps stage.
-            # If needed, it could be a separate initContainer using minio/mc.
+        command: ["sh", "-c", "echo 'Waiting for MLflow...' && until wget -q --spider -T 10 http://mlflow:5000/health; do sleep 5; done && echo 'MLflow is ready!'"]
       containers:
       - name: trainer
         image: python:3.10-slim
@@ -59,6 +43,7 @@ spec:
       - name: scripts-volume
         configMap:
           name: training-scripts
+      # Revert to the default restart policy now that debugging is complete.
       restartPolicy: OnFailure
   backoffLimit: 1
   activeDeadlineSeconds: 300

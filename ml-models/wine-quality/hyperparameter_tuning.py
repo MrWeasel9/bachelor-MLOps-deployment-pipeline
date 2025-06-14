@@ -21,7 +21,6 @@ X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.25, random
 
 # Set the experiment name
 mlflow.set_experiment("wine-quality")
-# Disable autologging for the top-level model to log it manually
 mlflow.sklearn.autolog(log_models=False, log_datasets=False) 
 
 lr = ElasticNet(random_state=42)
@@ -60,12 +59,8 @@ with mlflow.start_run(run_name="hyperparameter-tuning") as parent_run:
         }
     )
     
-    # Save the parent run ID to a file for the pipeline to retrieve
     parent_run_id = parent_run.info.run_id
-    with open("/tmp/run_id.txt", "w") as f:
-        f.write(parent_run_id)
-    
-    print(f"Best parameters: {clf.best_params_}")
-    print(f"Best test R2 score: {r2}")
     print(f"Hyperparameter tuning completed and logged to MLflow!")
-    print(f"Run ID {parent_run_id} saved to /tmp/run_id.txt")
+    # THIS IS THE FIX: Print the run ID as the final output for the pipeline to capture.
+    print(parent_run_id)
+

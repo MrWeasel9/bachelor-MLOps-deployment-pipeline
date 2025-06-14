@@ -342,43 +342,25 @@ pipeline {
                         echo "--- Starting model training job ---"
                         sh "kubectl delete job model-training-job -n mlops --ignore-not-found=true"
                         sh "kubectl apply -f services/training/trainer-job.yaml"
+                        sh "kubectl wait --for=condition=complete job/model-training-job -n mlops --timeout=300s"
                         
-                        // THIS IS THE FIX: This new polling logic will reliably capture the error.
-                        timeout(time: 5, unit: 'MINUTES') {
-                            // Loop until the job succeeds or fails
-                            while (true) {
-                                def succeeded = sh(script: "kubectl get job model-training-job -n mlops -o jsonpath='{.status.succeeded}'", returnStdout: true).trim()
-                                def failed = sh(script: "kubectl get job model-training-job -n mlops -o jsonpath='{.status.failed}'", returnStdout: true).trim()
-
-                                if (succeeded == '1') {
-                                    echo "Training job completed successfully."
-                                    break // Exit the loop
-                                }
-
-                                if (failed == '1') {
-                                    echo "!!! Training job failed. Fetching logs for debugging. !!!"
-                                    def podName = sh(script: "kubectl get pods -n mlops -l job-name=model-training-job -o jsonpath='{.items[0].metadata.name}'", returnStdout: true).trim()
-                                    sh "echo '--- LOGS FROM FAILED POD ${podName} ---'; kubectl logs ${podName} -n mlops -c trainer; echo '--- END OF LOGS ---'"
-                                    error "Training job failed. See logs above for the Python error."
-                                }
-                                
-                                echo "Training job still running..."
-                                sleep(10) // Wait 10 seconds before checking again
-                            }
-                        }
-                        
-                        echo "--- Fetching new run ID from result file ---"
+                        echo "--- Fetching new run ID from training logs ---"
                         def trainingPodName = sh(script: "kubectl get pods -n mlops -l job-name=model-training-job -o jsonpath='{.items[0].metadata.name}'", returnStdout: true).trim()
-                        sh "kubectl cp -n mlops ${trainingPodName}:/tmp/run_id.txt ./run_id.txt"
-                        def newRunId = readFile('run_id.txt').trim()
+                        
+                        // THIS IS THE FIX: Capture the full log output.
+                        def logs = sh(script: "kubectl logs ${trainingPodName} -n mlops -c trainer", returnStdout: true).trim()
+                        
+                        // The run ID is now the last line of the log.
+                        def logLines = logs.split('\\n')
+                        def newRunId = logLines.last().trim()
 
-                        if (!newRunId) {
-                            error "Could not retrieve a valid Run ID from the training job's result file."
+                        // A quick check to ensure the ID looks valid
+                        if (!newRunId || !newRunId.matches('[a-f0-9]{32}')) {
+                            error "Could not retrieve a valid Run ID from the training job logs. Last line was: '${newRunId}'"
                         }
                         echo "Found new Run ID: ${newRunId}"
 
                         // --- 2. Build Image ---
-                        // (The rest of the stage remains the same)
                         echo "--- Starting model builder job for Run ID: ${newRunId} ---"
                         def builderManifest = readFile('services/training/builder-job.yaml')
                         builderManifest = builderManifest.replace('<RUN_ID_PLACEHOLDER>', newRunId) 
@@ -401,7 +383,7 @@ pipeline {
 
                         // --- 4. Cleanup ---
                         echo "--- Cleaning up temporary files and jobs ---"
-                        sh "rm temp-builder-job.yaml temp-inference-service.yaml run_id.txt"
+                        sh "rm temp-builder-job.yaml temp-inference-service.yaml"
                         sh "kubectl delete configmap training-scripts -n mlops"
                         sh "kubectl delete job model-training-job -n mlops"
                         sh "kubectl delete job model-builder-job -n mlops"

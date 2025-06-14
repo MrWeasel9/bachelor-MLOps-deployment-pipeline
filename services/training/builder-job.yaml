@@ -14,13 +14,20 @@ spec:
     spec:
       containers:
       - name: builder
-        image: python:3.10-slim
+        # CORRECTED IMAGE: Use an image that includes the Docker CLI.
+        image: docker:latest
         command:
           - "sh"
           - "-c"
           - |
             set -ex
+            # FIX: Install Python and pip, which are not in the 'docker' base image.
+            apk add --no-cache python3 py3-pip
+
+            # Now, install the required Python packages.
             pip install "mlflow[mlserver]==2.14.3" boto3
+
+            # The original commands can now succeed because the Docker CLI is present.
             mlflow models build-docker -m "runs:/${RUN_ID}/model" -n "${DOCKER_IMAGE_NAME}" --enable-mlserver
             echo "${DOCKER_PASSWORD}" | docker login --username "${DOCKER_USERNAME}" --password-stdin
             docker push "${DOCKER_IMAGE_NAME}"

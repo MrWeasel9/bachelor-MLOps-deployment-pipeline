@@ -1,5 +1,5 @@
-# This manifest defines a Kubernetes Job to build and push the Docker image.
-# The values in angle brackets are placeholders that Jenkins will replace.
+# This manifest defines a Kubernetes Job to build and push a Docker image using Kaniko.
+# It no longer depends on the node's Docker daemon.
 apiVersion: batch/v1
 kind: Job
 metadata:
@@ -8,40 +8,29 @@ metadata:
 spec:
   template:
     metadata:
-      # This annotation tells Istio not to inject its sidecar proxy.
       annotations:
         sidecar.istio.io/inject: "false"
     spec:
-      containers:
-      - name: builder
-        # CORRECTED IMAGE: Use an image that includes the Docker CLI.
-        image: docker:latest
+      # This service account will be linked to the Docker Hub credentials secret
+      serviceAccountName: default 
+      initContainers:
+      - name: generate-build-context
+        image: python:3.10-slim
         command:
           - "sh"
           - "-c"
           - |
             set -ex
-            # FIX: Install Python and pip, which are not in the 'docker' base image.
-            apk add --no-cache python3 py3-pip
-
-            # Now, install the required Python packages.
             pip install "mlflow[mlserver]==2.14.3" boto3
-
-            # The original commands can now succeed because the Docker CLI is present.
-            mlflow models build-docker -m "runs:/${RUN_ID}/model" -n "${DOCKER_IMAGE_NAME}" --enable-mlserver
-            echo "${DOCKER_PASSWORD}" | docker login --username "${DOCKER_USERNAME}" --password-stdin
-            docker push "${DOCKER_IMAGE_NAME}"
-            echo "Build and push complete!"
+            # Generate the Dockerfile and model artifacts into the shared workspace
+            mlflow models generate-dockerfile \
+              -m "runs:/${RUN_ID}/model" \
+              -d /workspace \
+              --enable-mlserver
+            echo "Build context generated successfully."
         env:
-        # These values will be injected by the Jenkins pipeline
         - name: RUN_ID
           value: "<RUN_ID_PLACEHOLDER>"
-        - name: DOCKER_IMAGE_NAME
-          value: "<DOCKER_IMAGE_NAME_PLACEHOLDER>"
-        - name: DOCKER_USERNAME
-          value: "<DOCKER_USERNAME_PLACEHOLDER>"
-        - name: DOCKER_PASSWORD
-          value: "<DOCKER_PASSWORD_PLACEHOLDER>"
         - name: MLFLOW_TRACKING_URI
           value: "http://mlflow:5000"
         - name: MLFLOW_S3_ENDPOINT_URL
@@ -50,12 +39,27 @@ spec:
         - secretRef:
             name: aws-s3-credentials
         volumeMounts:
-        - name: docker-sock
-          mountPath: /var/run/docker.sock
+        - name: build-context
+          mountPath: /workspace
+      containers:
+      - name: kaniko-builder
+        image: gcr.io/kaniko-project/executor:latest
+        args:
+          - "--context=dir:///workspace"
+          - "--dockerfile=/workspace/Dockerfile"
+          - "--destination=${DOCKER_IMAGE_NAME}"
+        env:
+        - name: DOCKER_IMAGE_NAME
+          value: "<DOCKER_IMAGE_NAME_PLACEHOLDER>"
+        volumeMounts:
+        - name: build-context
+          mountPath: /workspace
+          
       volumes:
-      - name: docker-sock
-        hostPath:
-          path: /var/run/docker.sock
+      # A shared temporary volume for the initContainer to pass files to the Kaniko container
+      - name: build-context
+        emptyDir: {}
+
       restartPolicy: OnFailure
   backoffLimit: 1
-  activeDeadlineSeconds: 600
+  activeDeadlineSeconds: 900 # Increased timeout for image building

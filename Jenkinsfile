@@ -62,61 +62,37 @@ pipeline {
         }
 
         stage('Configure RKE2') {
-    when {
-        expression { !params.DO_DESTROY && !params.SKIP_INFRA_INSTALL }
-    }
-    steps {
-        withCredentials([file(credentialsId: 'gcp-terraform-key', variable: 'GCLOUD_AUTH')]) {
-            sh """
-                set -ex
-                gcloud auth activate-service-account --key-file=\$GCLOUD_AUTH
-                gcloud config set project bachelors-project-461620
-                gcloud config set compute/zone europe-central2-a
+            when {
+                expression { !params.DO_DESTROY && !params.SKIP_INFRA_INSTALL }
+            }
+            steps {
+                withCredentials([file(credentialsId: 'gcp-terraform-key', variable: 'GCLOUD_AUTH')]) {
+                    sh """
+                        set -ex
+                        gcloud auth activate-service-account --key-file=\$GCLOUD_AUTH
+                        gcloud config set project bachelors-project-461620
+                        gcloud config set compute/zone europe-central2-a
 
-                # Configure master node
-                gcloud compute ssh mlops-master --command="sudo mkdir -p /etc/rancher/rke2"
-                gcloud compute ssh mlops-master --command="echo -e 'tls-san:\\n  - ${MASTER_EXTERNAL_IP}' | sudo tee /etc/rancher/rke2/config.yaml"
-                gcloud compute ssh mlops-master --command="curl -sfL https://get.rke2.io | sudo sh - && sudo systemctl enable rke2-server && sudo systemctl restart rke2-server"
-                
-                echo "Waiting for master node to be ready..."
-                sleep 180
-                
-                NODE_TOKEN=\$(gcloud compute ssh mlops-master --command='sudo cat /var/lib/rancher/rke2/server/node-token' --quiet)
+                        # Configure master node
+                        gcloud compute ssh mlops-master --command="sudo mkdir -p /etc/rancher/rke2"
+                        gcloud compute ssh mlops-master --command="echo -e 'tls-san:\\n  - ${MASTER_EXTERNAL_IP}' | sudo tee /etc/rancher/rke2/config.yaml"
+                        gcloud compute ssh mlops-master --command="curl -sfL https://get.rke2.io | sudo sh - && sudo systemctl enable rke2-server && sudo systemctl restart rke2-server"
+                        
+                        echo "Waiting for master node to be ready..."
+                        sleep 180
+                        
+                        NODE_TOKEN=\$(gcloud compute ssh mlops-master --command='sudo cat /var/lib/rancher/rke2/server/node-token' --quiet)
 
-                # --- FIX: INSTALL DOCKER ON WORKER NODES (CORRECT REPOSITORY) ---
-                echo "--- Installing Docker on worker nodes ---"
-                for worker in mlops-worker-1 mlops-worker-2
-                do
-                  gcloud compute ssh \$worker --command='
-                    set -ex
-                    echo "Installing Docker on \$HOSTNAME..."
-                    # FIX: Explicitly remove any old config file to ensure a clean state
-                    sudo rm -f /etc/apt/sources.list.d/docker.list
-                    sudo apt-get update -y
-                    sudo apt-get install -y ca-certificates curl
-                    sudo install -m 0755 -d /etc/apt/keyrings
-                    sudo curl -fsSL https://download.docker.com/linux/ubuntu/gpg -o /etc/apt/keyrings/docker.asc
-                    sudo chmod a+r /etc/apt/keyrings/docker.asc
-                    echo \
-                        "deb [arch=\$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.asc] https://download.docker.com/linux/ubuntu \
-                        \$(. /etc/os-release && echo \$VERSION_CODENAME) stable" | \
-                        sudo tee /etc/apt/sources.list.d/docker.list > /dev/null
-                    sudo apt-get update -y
-                    sudo apt-get install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
-                    sudo systemctl enable --now docker
-                    echo "Docker installed successfully on \$HOSTNAME."
-                    '
-                done
-                # --- END OF FIX ---
+                        # --- Docker installation block has been removed ---
 
-                # Configure worker nodes to join the cluster
-                echo "--- Configuring worker nodes ---"
-                gcloud compute ssh mlops-worker-1 --command="curl -sfL https://get.rke2.io | sudo sh - && sudo mkdir -p /etc/rancher/rke2 && echo -e 'server: https://${MASTER_INTERNAL_IP}:9345\\ntoken: \${NODE_TOKEN}' | sudo tee /etc/rancher/rke2/config.yaml && sudo systemctl enable rke2-agent && sudo systemctl restart rke2-agent"
-                gcloud compute ssh mlops-worker-2 --command="curl -sfL https://get.rke2.io | sudo sh - && sudo mkdir -p /etc/rancher/rke2 && echo -e 'server: https://${MASTER_INTERNAL_IP}:9345\\ntoken: \${NODE_TOKEN}' | sudo tee /etc/rancher/rke2/config.yaml && sudo systemctl enable rke2-agent && sudo systemctl restart rke2-agent"
-            """
+                        # Configure worker nodes to join the cluster
+                        echo "--- Configuring worker nodes ---"
+                        gcloud compute ssh mlops-worker-1 --command="curl -sfL https://get.rke2.io | sudo sh - && sudo mkdir -p /etc/rancher/rke2 && echo -e 'server: https://${MASTER_INTERNAL_IP}:9345\\ntoken: \${NODE_TOKEN}' | sudo tee /etc/rancher/rke2/config.yaml && sudo systemctl enable rke2-agent && sudo systemctl restart rke2-agent"
+                        gcloud compute ssh mlops-worker-2 --command="curl -sfL https://get.rke2.io | sudo sh - && sudo mkdir -p /etc/rancher/rke2 && echo -e 'server: https://${MASTER_INTERNAL_IP}:9345\\ntoken: \${NODE_TOKEN}' | sudo tee /etc/rancher/rke2/config.yaml && sudo systemctl enable rke2-agent && sudo systemctl restart rke2-agent"
+                    """
+                }
+            }
         }
-    }
-}
 
         stage('Export kubeconfig for Local Use') {
             when {
@@ -374,14 +350,16 @@ pipeline {
         // --- THIS IS THE NEW AUTOMATED CI/CD STAGE FOR MODELS ---
         
         stage('Train, Build, and Deploy Model') {
-            when { expression { params.DEPLOY_NEW_MODEL } }
-            steps {
-                withCredentials([
-                    usernamePassword(credentialsId: 'dockerhub-creds', usernameVariable: 'DOCKER_USERNAME', passwordVariable: 'DOCKER_PASSWORD')
-                ]) {
-                    script {
-                        def DOCKER_IMAGE_NAME = "${DOCKER_USERNAME}/mlflow-wine-classifier:v${env.BUILD_NUMBER}"
-                        
+        when { expression { params.DEPLOY_NEW_MODEL } }
+        steps {
+            withCredentials([
+                usernamePassword(credentialsId: 'dockerhub-creds', usernameVariable: 'DOCKER_USERNAME', passwordVariable: 'DOCKER_PASSWORD')
+            ]) {
+                script {
+                    def DOCKER_IMAGE_NAME = "${DOCKER_USERNAME}/mlflow-wine-classifier:v${env.BUILD_NUMBER}"
+                    def newRunId = ''
+
+                    try {
                         // --- 1. Train Model ---
                         echo "--- Creating ConfigMap for training scripts ---"
                         sh "kubectl create configmap training-scripts --from-file=ml-models/wine-quality/hyperparameter_tuning.py -n mlops --dry-run=client -o yaml | kubectl apply -f -"
@@ -393,32 +371,37 @@ pipeline {
                         
                         echo "--- Fetching new run ID from training logs ---"
                         def trainingPodName = sh(script: "kubectl get pods -n mlops -l job-name=model-training-job -o jsonpath='{.items[0].metadata.name}'", returnStdout: true).trim()
-                        
-                        // THIS IS THE FIX: Capture the full log output from the completed pod.
                         def logs = sh(script: "kubectl logs ${trainingPodName} -n mlops -c trainer", returnStdout: true).trim()
-                        
-                        // The run ID is now the last line of the script's output.
                         def logLines = logs.split('\\n')
-                        def newRunId = logLines.last().trim()
+                        newRunId = logLines.last().trim()
 
-                        // A quick check to ensure the ID looks valid (is a 32-character hex string)
                         if (!newRunId || !newRunId.matches('[a-f0-9]{32}')) {
                             error "Could not retrieve a valid Run ID from the training job logs. Full Logs:\n${logs}"
                         }
                         echo "Found new Run ID: ${newRunId}"
 
-                        // --- 2. Build Image ---
+                        // --- 2. Build Image with Kaniko ---
+                        
+                        // NEW: Create a Kubernetes secret for Docker Hub authentication
+                        echo "--- Creating Docker credentials secret for Kaniko ---"
+                        sh """
+                          kubectl create secret docker-registry dockerhub-creds \\
+                            --docker-server=https://index.docker.io/v1/ \\
+                            --docker-username=${DOCKER_USERNAME} \\
+                            --docker-password='${DOCKER_PASSWORD}' \\
+                            -n mlops \\
+                            --dry-run=client -o yaml | kubectl apply -f -
+                        """
+
                         echo "--- Starting model builder job for Run ID: ${newRunId} ---"
                         def builderManifest = readFile('services/training/builder-job.yaml')
                         builderManifest = builderManifest.replace('<RUN_ID_PLACEHOLDER>', newRunId) 
                         builderManifest = builderManifest.replace('<DOCKER_IMAGE_NAME_PLACEHOLDER>', DOCKER_IMAGE_NAME)
-                        builderManifest = builderManifest.replace('<DOCKER_USERNAME_PLACEHOLDER>', DOCKER_USERNAME)
-                        builderManifest = builderManifest.replace('<DOCKER_PASSWORD_PLACEHOLDER>', DOCKER_PASSWORD)
                         
                         sh "kubectl delete job model-builder-job -n mlops --ignore-not-found=true"
                         writeFile(file: 'temp-builder-job.yaml', text: builderManifest)
                         sh "kubectl apply -f temp-builder-job.yaml"
-                        sh "kubectl wait --for=condition=complete job/model-builder-job -n mlops --timeout=600s"
+                        sh "kubectl wait --for=condition=complete job/model-builder-job -n mlops --timeout=900s"
                         
                         // --- 3. Deploy to KServe ---
                         echo "--- Deploying image ${DOCKER_IMAGE_NAME} to KServe ---"
@@ -428,15 +411,19 @@ pipeline {
                         writeFile(file: 'temp-inference-service.yaml', text: inferenceManifest)
                         sh "kubectl apply -f temp-inference-service.yaml"
 
+                    } finally {
                         // --- 4. Cleanup ---
-                        echo "--- Cleaning up temporary files and jobs ---"
-                        sh "rm temp-builder-job.yaml temp-inference-service.yaml"
-                        sh "kubectl delete configmap training-scripts -n mlops"
-                        sh "kubectl delete job model-training-job -n mlops"
-                        sh "kubectl delete job model-builder-job -n mlops"
+                        echo "--- Cleaning up temporary files and resources ---"
+                        sh "rm -f temp-builder-job.yaml temp-inference-service.yaml"
+                        sh "kubectl delete configmap training-scripts -n mlops --ignore-not-found=true"
+                        // NEW: Always delete the Docker Hub secret
+                        sh "kubectl delete secret dockerhub-creds -n mlops --ignore-not-found=true"
+                        sh "kubectl delete job model-training-job -n mlops --ignore-not-found=true"
+                        sh "kubectl delete job model-builder-job -n mlops --ignore-not-found=true"
                     }
                 }
             }
         }
+    }
     }
 }

@@ -407,9 +407,12 @@ pipeline {
                         echo "--- Deploying image ${DOCKER_IMAGE_NAME} to KServe ---"
                         def inferenceManifest = readFile('services/kserve/inference-service.yaml')
                         inferenceManifest = inferenceManifest.replace('<DOCKER_IMAGE_NAME>', DOCKER_IMAGE_NAME)
-                        
                         writeFile(file: 'temp-inference-service.yaml', text: inferenceManifest)
                         sh "kubectl apply -f temp-inference-service.yaml"
+
+                        // NEW: expose the predictor externally (no placeholders inside)
+                        sh "kubectl apply -f services/kserve/inference-service-nodeport.yaml"
+
                         sh """
                         echo '--- Waiting for KServe to become Ready ---'
                         kubectl wait --for=condition=Ready inferenceservice/mlflow-wine-classifier \

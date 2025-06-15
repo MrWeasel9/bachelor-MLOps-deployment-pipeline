@@ -9,23 +9,25 @@ spec:
       annotations:
         sidecar.istio.io/inject: "false"
     spec:
-      # Service account linked to the Docker Hub credentials secret
       serviceAccountName: default
+
+      # 1️⃣ Init‑container: build the MLflow model image context
       initContainers:
       - name: generate-build-context
         image: python:3.10-slim
         command:
-        - "sh"
-        - "-c"
-        - |
-          set -ex
-          pip install "mlflow[mlserver]==2.14.3" boto3
-          # Generate the Dockerfile and model artifacts into the shared workspace
-          mlflow models generate-dockerfile \
-            -m "runs:/${RUN_ID}/model" \
-            -d /workspace \
-            --enable-mlserver
-          echo "Build context generated successfully."
+          - "sh"
+          - "-c"
+          - |
+            set -ex
+            # Install MLflow + MLServer runtime
+            pip install mlflow==2.14.3 mlserver mlserver-mlflow boto3
+            
+            # Generate Dockerfile & context for the model run returned by training
+            mlflow models generate-dockerfile \
+              -m "runs:/<RUN_ID_PLACEHOLDER>/model" \
+              -d /workspace \
+              --enable-mlserver
         env:
         - name: MLFLOW_TRACKING_URI
           value: "http://mlflow:5000"
@@ -37,6 +39,8 @@ spec:
         volumeMounts:
         - name: build-context
           mountPath: /workspace
+
+      # 2️⃣ Kaniko: build & push the final image to Docker Hub
       containers:
       - name: kaniko-builder
         image: gcr.io/kaniko-project/executor:latest
@@ -45,8 +49,6 @@ spec:
           - "--dockerfile=/workspace/Dockerfile"
           - "--destination=<DOCKER_IMAGE_NAME_PLACEHOLDER>"
         env:
-        - name: DOCKER_IMAGE_NAME
-          value: "<DOCKER_IMAGE_NAME_PLACEHOLDER>"
         - name: DOCKER_CONFIG
           value: "/kaniko/.docker"
         volumeMounts:
@@ -54,14 +56,15 @@ spec:
           mountPath: /workspace
         - name: docker-config
           mountPath: /kaniko/.docker
+
+      # Shared volumes
       volumes:
-      # Shared temporary volume for the initContainer to pass files to Kaniko
       - name: build-context
         emptyDir: {}
-      # Secret containing Docker Hub credentials for Kaniko push
       - name: docker-config
         secret:
           secretName: dockerhub-creds
+
       restartPolicy: OnFailure
   backoffLimit: 1
   activeDeadlineSeconds: 900

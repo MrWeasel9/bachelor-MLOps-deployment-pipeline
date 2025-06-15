@@ -410,14 +410,17 @@ pipeline {
                         
                         writeFile(file: 'temp-inference-service.yaml', text: inferenceManifest)
                         sh "kubectl apply -f temp-inference-service.yaml"
+                        sh """
+                        echo '--- Waiting for KServe to become Ready ---'
+                        kubectl wait --for=condition=Ready inferenceservice/mlflow-wine-classifier \
+                                        -n mlops --timeout=180s
+                        """
 
                     } finally {
                         // --- 4. Cleanup ---
                         echo "--- Cleaning up temporary files and resources ---"
                         sh "rm -f temp-builder-job.yaml temp-inference-service.yaml"
                         sh "kubectl delete configmap training-scripts -n mlops --ignore-not-found=true"
-                        // NEW: Always delete the Docker Hub secret
-                        sh "kubectl delete secret dockerhub-creds -n mlops --ignore-not-found=true"
                         sh "kubectl delete job model-training-job -n mlops --ignore-not-found=true"
                         sh "kubectl delete job model-builder-job -n mlops --ignore-not-found=true"
                     }

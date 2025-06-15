@@ -4,15 +4,22 @@ metadata:
   name: mlflow-wine-classifier
   namespace: mlops
   annotations:
-    autoscaling.knative.dev/initial-scale: "1"   # ▶️  start with one Pod
+    autoscaling.knative.dev/initial-scale: "1"
 spec:
   predictor:
-    minReplicas: 1                               # ▶️  keep one running
+    minReplicas: 1
     imagePullSecrets:
       - name: dockerhub-creds
     containers:
     - name: mlflow-wine-classifier
-      image: <DOCKER_IMAGE_NAME>                 # Jenkins replaces this
+      image: <DOCKER_IMAGE_NAME>
       env:
       - name: PROTOCOL
         value: v2
+      resources:               # 🔽 NEW
+        requests:
+          cpu: "200m"
+          memory: "256Mi"
+        limits:
+          cpu: "500m"
+          memory: "512Mi"

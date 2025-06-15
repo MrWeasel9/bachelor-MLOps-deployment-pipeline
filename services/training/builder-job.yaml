@@ -55,15 +55,11 @@ spec:
         - name: build-context
           mountPath: /workspace
         - name: docker-config
-          mountPath: /kaniko/.docker
-
-      # Shared volumes
-      volumes:
-      - name: build-context
-        emptyDir: {}
-      - name: docker-config
         secret:
           secretName: dockerhub-creds
+          items:
+            - key: .dockerconfigjson
+              path: config.json
 
       restartPolicy: OnFailure
   backoffLimit: 1

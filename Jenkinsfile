@@ -401,7 +401,7 @@ pipeline {
                         sh "kubectl delete job model-builder-job -n mlops --ignore-not-found=true"
                         writeFile(file: 'temp-builder-job.yaml', text: builderManifest)
                         sh "kubectl apply -f temp-builder-job.yaml"
-                        sh "kubectl wait --for=condition=complete job/model-builder-job -n mlops --timeout=900s"
+                        sh "kubectl wait --for=condition=complete job/model-builder-job -n mlops --timeout=1000s"
                         
                         // --- 3. Deploy to KServe ---
                         echo "--- Deploying image ${DOCKER_IMAGE_NAME} to KServe ---"
@@ -411,7 +411,7 @@ pipeline {
                         sh "kubectl apply -f temp-inference-service.yaml"
 
                         // NEW: expose the predictor externally (no placeholders inside)
-                        sh "kubectl apply -f services/kserve/inference-service-nodeport.yaml"
+                        sh "kubectl apply -f services/kserve/model-ingress.yaml"
 
                         sh """
                         echo '--- Waiting for KServe to become Ready ---'

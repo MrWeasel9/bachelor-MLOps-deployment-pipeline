@@ -171,18 +171,4 @@ resource "google_compute_firewall" "allow_vxlan" {
   source_ranges = ["10.0.0.0/8"] # or more restrictive, e.g., your actual subnet
 }
 
-# === NEW: expose MLflow predictor NodePort ===
-resource "google_compute_firewall" "allow_mlflow_nodeport" {
-  name    = "allow-mlflow-nodeport"
-  network = "default"
-
-  allow {
-    protocol = "tcp"
-    ports    = ["32080"]          # same as nodePort above
-  }
-
-  # Only the master has a static public IP; that’s what callers hit.
-  target_tags   = ["master"]
-  source_ranges = ["0.0.0.0/0"]   # or lock down to your clients’ IP block
-}
 

@@ -1,0 +1,14 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: wine-classifier-predictor
+  namespace: mlops
+spec:
+  type: ClusterIP
+  selector:
+    serving.kserve.io/inferenceservice: mlflow-wine-classifier   # already present
+    component: predictor                                         # ← use the actual label
+  ports:
+  - name: http
+    port: 80                 # what the Ingress calls
+    targetPort: 8012         # inside-pod port (seen in revision endpoints)

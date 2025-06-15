@@ -410,14 +410,17 @@ pipeline {
                         writeFile(file: 'temp-inference-service.yaml', text: inferenceManifest)
                         sh "kubectl apply -f temp-inference-service.yaml"
 
-                        // NEW: expose the predictor externally (no placeholders inside)
-                        sh "kubectl apply -f services/kserve/model-ingress.yaml"
-
+                        // ✨ 1. Wait until the InferenceService is ready
                         sh """
                         echo '--- Waiting for KServe to become Ready ---'
                         kubectl wait --for=condition=Ready inferenceservice/mlflow-wine-classifier \
-                                        -n mlops --timeout=180s
+                                    -n mlops --timeout=180s
                         """
+
+                        sh "kubectl apply -f services/kserve/predictor-service.yaml"
+                        sh "kubectl apply -f services/kserve/model-ingress.yaml"
+
+
 
                     } finally {
                         // --- 4. Cleanup ---

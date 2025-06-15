@@ -1,7 +1,5 @@
-EXTERNAL_IP=34.116.194.243      # your master-node public IP
-NODE_PORT=32080                 # from step 1
-
+MASTER=34.116.194.243
 curl -X POST \
-     -H "Content-Type: application/json" \
+     -H 'Content-Type: application/json' \
      -d @wine.json \
-     http://${EXTERNAL_IP}:${NODE_PORT}/v2/models/mlflow-wine-classifier/infer
+     http://${MASTER}:32255/models/mlflow-wine-classifier/infer

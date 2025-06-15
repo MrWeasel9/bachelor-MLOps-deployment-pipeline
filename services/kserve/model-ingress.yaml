@@ -1,24 +1,21 @@
 apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:
-  name: model-ingress                 # ◀︎ single entry‐point for all models
+  name: model-ingress
   namespace: mlops
   annotations:
     kubernetes.io/ingress.class: nginx
+    nginx.ingress.kubernetes.io/use-regex: "true"
     nginx.ingress.kubernetes.io/rewrite-target: /v2/models/$1/$2
 spec:
   ingressClassName: nginx
   rules:
   - http:
       paths:
-      # ───── First model: wine-classifier ─────
-      - path: /models/mlflow-wine-classifier/(.*)
+      - path: /models/([A-Za-z0-9-]+)/(.*)
         pathType: ImplementationSpecific
         backend:
           service:
-            name: mlflow-wine-classifier-predictor-default
+            name: wine-classifier-predictor      # ← now static
             port:
               number: 80
-      # ───── Add future models here (copy-paste) ─────
-      # - path: /models/another-model/(.*)
-      #   ...

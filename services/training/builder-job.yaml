@@ -1,5 +1,3 @@
-# This manifest defines a Kubernetes Job to build and push a Docker image using Kaniko.
-# It no longer depends on the node's Docker daemon.
 apiVersion: batch/v1
 kind: Job
 metadata:
@@ -11,26 +9,24 @@ spec:
       annotations:
         sidecar.istio.io/inject: "false"
     spec:
-      # This service account will be linked to the Docker Hub credentials secret
-      serviceAccountName: default 
+      # Service account linked to the Docker Hub credentials secret
+      serviceAccountName: default
       initContainers:
       - name: generate-build-context
         image: python:3.10-slim
         command:
-          - "sh"
-          - "-c"
-          - |
-            set -ex
-            pip install "mlflow[mlserver]==2.14.3" boto3
-            # Generate the Dockerfile and model artifacts into the shared workspace
-            mlflow models generate-dockerfile \
-              -m "runs:/${RUN_ID}/model" \
-              -d /workspace \
-              --enable-mlserver
-            echo "Build context generated successfully."
+        - "sh"
+        - "-c"
+        - |
+          set -ex
+          pip install "mlflow[mlserver]==2.14.3" boto3
+          # Generate the Dockerfile and model artifacts into the shared workspace
+          mlflow models generate-dockerfile \
+            -m "runs:/${RUN_ID}/model" \
+            -d /workspace \
+            --enable-mlserver
+          echo "Build context generated successfully."
         env:
-        - name: RUN_ID
-          value: "<RUN_ID_PLACEHOLDER>"
         - name: MLFLOW_TRACKING_URI
           value: "http://mlflow:5000"
         - name: MLFLOW_S3_ENDPOINT_URL
@@ -47,19 +43,25 @@ spec:
         args:
           - "--context=dir:///workspace"
           - "--dockerfile=/workspace/Dockerfile"
-          - "--destination=${DOCKER_IMAGE_NAME}"
+          - "--destination=<DOCKER_IMAGE_NAME_PLACEHOLDER>"
         env:
         - name: DOCKER_IMAGE_NAME
           value: "<DOCKER_IMAGE_NAME_PLACEHOLDER>"
+        - name: DOCKER_CONFIG
+          value: "/kaniko/.docker"
         volumeMounts:
         - name: build-context
           mountPath: /workspace
-          
+        - name: docker-config
+          mountPath: /kaniko/.docker
       volumes:
-      # A shared temporary volume for the initContainer to pass files to the Kaniko container
+      # Shared temporary volume for the initContainer to pass files to Kaniko
       - name: build-context
         emptyDir: {}
-
+      # Secret containing Docker Hub credentials for Kaniko push
+      - name: docker-config
+        secret:
+          secretName: dockerhub-creds
       restartPolicy: OnFailure
   backoffLimit: 1
-  activeDeadlineSeconds: 900 # Increased timeout for image building
+  activeDeadlineSeconds: 900

@@ -5,6 +5,7 @@ metadata:
   namespace: mlops
   annotations:
     autoscaling.knative.dev/initial-scale: "1"
+    serving.kserve.io/enable-prometheus-scraping: "true" # <-- ADD THIS LINE
 spec:
   predictor:
     minReplicas: 1
@@ -16,7 +17,7 @@ spec:
       env:
       - name: PROTOCOL
         value: v2
-      resources:               # 🔽 NEW
+      resources:
         requests:
           cpu: "200m"
           memory: "256Mi"

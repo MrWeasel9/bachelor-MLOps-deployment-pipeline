@@ -189,7 +189,7 @@ pipeline {
         }
 
         
-                /* ----------  MLOps STACK  ---------- */
+        /* ----------  MLOps STACK  ---------- */
         stage('Deploy MLOps') {
             when { expression { !params.DO_DESTROY } }
             steps {
@@ -281,6 +281,24 @@ pipeline {
                     }
                 }
             }
+        }
+
+        stage('Deploy monitoring stack') {
+            when { expression { !params.DO_DESTROY } }
+            steps {
+                sh '''
+                    helm repo add prometheus-community https://prometheus-community.github.io/helm-charts
+                    helm repo add grafana https://grafana.github.io/helm-charts
+                    helm repo update
+
+                    # Install Prometheus Operator
+                    helm upgrade --install prometheus-operator prometheus-community/kube-prometheus-stack \\
+                    --namespace monitoring --create-namespace
+                    helm upgrade --install grafana grafana/grafana --namespace monitoring
+                '''
+
+            }
+
         }
 
 

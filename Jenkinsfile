@@ -283,24 +283,21 @@ pipeline {
             }
         }
 
-        // In your Jenkinsfile
-
-      stage('Deploy monitoring stack') {
-          when { expression { !params.DO_DESTROY } }
-          steps {
-              sh '''
+        stage('Deploy monitoring stack') {
+            when { expression { !params.DO_DESTROY } }
+            steps {
+                sh '''
                   helm repo add prometheus-community https://prometheus-community.github.io/helm-charts
                   helm repo add grafana https://grafana.github.io/helm-charts
                   helm repo update
 
-                  # Configure and install Grafana
+                  # CORRECTED: Configure and install Grafana with the explicit external URL
                   helm upgrade --install grafana grafana/grafana \\
                   --namespace monitoring --create-namespace \\
-                  --set 'grafana\\.ini.server.root_url=http://%(domain)s/grafana/' \\
-                  --set 'grafana\\.ini.server.serve_from_sub_path=true'
+                  --set "grafana.ini.server.root_url=http://${MASTER_EXTERNAL_IP}:32255/grafana/" \\
+                  --set "grafana.ini.server.serve_from_sub_path=true"
 
                   # Configure and install Prometheus Operator stack
-                  # Note: We need the external URL for Prometheus to generate correct links.
                   helm upgrade --install prometheus-operator prometheus-community/kube-prometheus-stack \\
                   --namespace monitoring \\
                   --set prometheus.prometheusSpec.routePrefix=/ \\
@@ -308,9 +305,9 @@ pipeline {
 
                   # Apply the Ingress rules after services are installed
                   kubectl apply -f services/monitoring/monitoring-ingress.yaml
-              '''
-          }
-      }
+                '''
+            }
+        }
 
 
         // --- THIS STAGE IS UPDATED WITH THE FIX ---

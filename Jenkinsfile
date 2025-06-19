@@ -283,23 +283,34 @@ pipeline {
             }
         }
 
-        stage('Deploy monitoring stack') {
-            when { expression { !params.DO_DESTROY } }
-            steps {
-                sh '''
-                    helm repo add prometheus-community https://prometheus-community.github.io/helm-charts
-                    helm repo add grafana https://grafana.github.io/helm-charts
-                    helm repo update
+        // In your Jenkinsfile
 
-                    # Install Prometheus Operator
-                    helm upgrade --install prometheus-operator prometheus-community/kube-prometheus-stack \\
-                    --namespace monitoring --create-namespace
-                    helm upgrade --install grafana grafana/grafana --namespace monitoring
-                '''
+      stage('Deploy monitoring stack') {
+          when { expression { !params.DO_DESTROY } }
+          steps {
+              sh '''
+                  helm repo add prometheus-community https://prometheus-community.github.io/helm-charts
+                  helm repo add grafana https://grafana.github.io/helm-charts
+                  helm repo update
 
-            }
+                  # Configure and install Grafana
+                  helm upgrade --install grafana grafana/grafana \\
+                  --namespace monitoring --create-namespace \\
+                  --set 'grafana\\.ini.server.root_url=http://%(domain)s/grafana/' \\
+                  --set 'grafana\\.ini.server.serve_from_sub_path=true'
 
-        }
+                  # Configure and install Prometheus Operator stack
+                  # Note: We need the external URL for Prometheus to generate correct links.
+                  helm upgrade --install prometheus-operator prometheus-community/kube-prometheus-stack \\
+                  --namespace monitoring \\
+                  --set prometheus.prometheusSpec.routePrefix=/ \\
+                  --set prometheus.prometheusSpec.externalUrl=http://${MASTER_EXTERNAL_IP}:32255/prometheus
+
+                  # Apply the Ingress rules after services are installed
+                  kubectl apply -f services/monitoring/monitoring-ingress.yaml
+              '''
+          }
+      }
 
 
         // --- THIS STAGE IS UPDATED WITH THE FIX ---

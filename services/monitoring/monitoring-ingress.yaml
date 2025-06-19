@@ -7,15 +7,15 @@ metadata:
   namespace: monitoring
   annotations:
     kubernetes.io/ingress.class: nginx
-    # CORRECTED: Use a capture group that handles the path correctly.
-    nginx.ingress.kubernetes.io/rewrite-target: /$1
+    # THIS SNIPPET IS THE FIX. It replaces the rewrite-target annotation.
+    nginx.ingress.kubernetes.io/configuration-snippet: |
+      rewrite ^/grafana/(.*)$ /$1 break;
 spec:
   rules:
   - http:
       paths:
-      # CORRECTED: Simplify the path to capture everything after /grafana/
-      - path: /grafana/(.*)
-        pathType: ImplementationSpecific
+      - path: /grafana/
+        pathType: Prefix
         backend:
           service:
             name: grafana
@@ -29,13 +29,11 @@ metadata:
   namespace: monitoring
   annotations:
     kubernetes.io/ingress.class: nginx
-    # This rewrite rule is fine for Prometheus, but we'll update it for consistency.
     nginx.ingress.kubernetes.io/rewrite-target: /$1
 spec:
   rules:
   - http:
       paths:
-      # This path is also fine, but we'll update it for consistency.
       - path: /prometheus/(.*)
         pathType: ImplementationSpecific
         backend:

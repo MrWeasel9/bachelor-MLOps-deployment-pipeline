@@ -6,15 +6,14 @@ metadata:
   name: grafana-ingress
   namespace: monitoring
   annotations:
+    # THE FIX: REMOVE ALL REWRITE AND SNIPPET ANNOTATIONS
     kubernetes.io/ingress.class: nginx
-    # THIS SNIPPET IS THE FIX. It replaces the rewrite-target annotation.
-    nginx.ingress.kubernetes.io/configuration-snippet: |
-      rewrite ^/grafana/(.*)$ /$1 break;
 spec:
   rules:
   - http:
       paths:
-      - path: /grafana/
+      # This path and type are correct
+      - path: /grafana
         pathType: Prefix
         backend:
           service:
@@ -29,6 +28,7 @@ metadata:
   namespace: monitoring
   annotations:
     kubernetes.io/ingress.class: nginx
+    # Prometheus works, so we leave its rewrite rule alone
     nginx.ingress.kubernetes.io/rewrite-target: /$1
 spec:
   rules:

@@ -1,0 +1,6 @@
+# services/monitoring/grafana-values.yaml
+grafana.ini:
+  server:
+    # The crucial part is the explicit URL with the trailing slash
+    root_url: "http://${MASTER_EXTERNAL_IP}:32255/grafana/"
+    serve_from_sub_path: true

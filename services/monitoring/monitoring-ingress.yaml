@@ -7,18 +7,20 @@ metadata:
   namespace: monitoring
   annotations:
     kubernetes.io/ingress.class: nginx
-    nginx.ingress.kubernetes.io/rewrite-target: /$2
+    # CORRECTED: Use a capture group that handles the path correctly.
+    nginx.ingress.kubernetes.io/rewrite-target: /$1
 spec:
   rules:
   - http:
       paths:
-      - path: /grafana(/|$)(.*)
+      # CORRECTED: Simplify the path to capture everything after /grafana/
+      - path: /grafana/(.*)
         pathType: ImplementationSpecific
         backend:
           service:
             name: grafana
             port:
-              number: 80 # The port from 'kubectl get svc -n monitoring'
+              number: 80
 ---
 apiVersion: networking.k8s.io/v1
 kind: Ingress
@@ -27,16 +29,17 @@ metadata:
   namespace: monitoring
   annotations:
     kubernetes.io/ingress.class: nginx
-    nginx.ingress.kubernetes.io/rewrite-target: /$2
+    # This rewrite rule is fine for Prometheus, but we'll update it for consistency.
+    nginx.ingress.kubernetes.io/rewrite-target: /$1
 spec:
   rules:
   - http:
       paths:
-      - path: /prometheus(/|$)(.*)
+      # This path is also fine, but we'll update it for consistency.
+      - path: /prometheus/(.*)
         pathType: ImplementationSpecific
         backend:
           service:
-            # The service created by the kube-prometheus-stack chart
             name: prometheus-operated
             port:
-              number: 9090 # The web UI port for Prometheus
+              number: 9090

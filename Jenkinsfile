@@ -304,9 +304,12 @@ pipeline {
 
                   # Configure and install Prometheus Operator stack
                   helm upgrade --install prometheus-operator prometheus-community/kube-prometheus-stack \\
-                  --namespace monitoring \\
-                  --set prometheus.prometheusSpec.routePrefix=/ \\
-                  --set prometheus.prometheusSpec.externalUrl=http://${MASTER_EXTERNAL_IP}:32255/prometheus
+                    --namespace monitoring \\
+                    --set prometheus.prometheusSpec.serviceMonitorSelector.matchLabels."release"="prometheus" \\
+                    --set prometheus.prometheusSpec.serviceMonitorNamespaceSelector.matchExpressions[0].key="kubernetes.io/metadata.name" \\
+                    --set prometheus.prometheusSpec.serviceMonitorNamespaceSelector.matchExpressions[0].operator="Exists" \\
+                    --set prometheus.prometheusSpec.routePrefix=/ \\
+                    --set prometheus.prometheusSpec.externalUrl=http://${MASTER_EXTERNAL_IP}:32255/prometheus \\
 
                   # Apply the Ingress rules after services are installed
                   kubectl apply -f services/monitoring/monitoring-ingress.yaml
@@ -344,7 +347,6 @@ pipeline {
                     # Apply the core KServe manifest
                     kubectl apply -f https://github.com/kserve/kserve/releases/download/v0.13.0/kserve.yaml
                     
-                    # THIS IS THE FIX: Wait for the KServe webhook to be ready before applying cluster resources.
                     echo "--- Waiting for KServe webhook to be ready ---"
                     kubectl wait --for=condition=Available deployment --all --namespace=kserve --timeout=300s
 
@@ -441,7 +443,7 @@ pipeline {
                         writeFile(file: 'temp-inference-service.yaml', text: inferenceManifest)
                         sh "kubectl apply -f temp-inference-service.yaml"
 
-                        // ✨ 1. Wait until the InferenceService is ready
+                        // 1. Wait until the InferenceService is ready
                         sh """
                         echo '--- Waiting for KServe to become Ready ---'
                         kubectl wait --for=condition=Ready inferenceservice/mlflow-wine-classifier \

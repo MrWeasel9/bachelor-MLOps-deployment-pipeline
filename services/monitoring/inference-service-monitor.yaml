@@ -4,16 +4,15 @@ metadata:
   name: mlflow-wine-classifier-monitor
   namespace: monitoring
   labels:
-    release: prometheus  # Matches Prometheus selector
+    release: prometheus
 spec:
   jobLabel: kserve-metrics
-  podTargetLabels: [serving.kserve.io/inferenceservice]
   namespaceSelector:
     matchNames: [mlops]
   selector:
     matchLabels:
       serving.kserve.io/inferenceservice: mlflow-wine-classifier
   endpoints:
-  - port: http  # Matches port name in predictor-service
+  - port: http-metrics  # Matches port name in InferenceService
     path: /metrics
     interval: 15s

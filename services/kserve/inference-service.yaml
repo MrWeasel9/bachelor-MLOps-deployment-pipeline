@@ -5,15 +5,16 @@ metadata:
   namespace: mlops
   annotations:
     autoscaling.knative.dev/initial-scale: "1"
-    serving.kserve.io/enable-prometheus-scraping: "true" # <-- ADD THIS LINE
+    serving.kserve.io/enable-prometheus-scraping: "true"
 spec:
   predictor:
     minReplicas: 1
-    imagePullSecrets:
-      - name: dockerhub-creds
     containers:
     - name: mlflow-wine-classifier
       image: <DOCKER_IMAGE_NAME>
+      ports:
+        - name: http-metrics  # Add this
+          containerPort: 8012
       env:
       - name: PROTOCOL
         value: v2

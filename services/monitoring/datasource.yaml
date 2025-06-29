@@ -6,7 +6,6 @@ metadata:
   namespace: monitoring
   labels:
     grafana_datasource: "1"
-# The 'data' field should be at the top level, not inside 'spec'
 data:
   prometheus-datasource.yaml: |-
     apiVersion: 1

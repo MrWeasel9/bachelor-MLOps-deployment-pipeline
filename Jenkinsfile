@@ -283,52 +283,52 @@ pipeline {
             }
         }
 
-        // Jenkinsfile
-
         stage('Deploy monitoring stack') {
-        when { expression { !params.DO_DESTROY } }
-        steps {
-            withCredentials([string(credentialsId: 'grafana-admin-pass', variable: 'GRAFANA_ADMIN_PASSWORD')]) {
-                sh '''
-                    set -e
-                    set -x
+            when { expression { !params.DO_DESTROY } }
+            steps {
+                withCredentials([string(credentialsId: 'grafana-admin-pass', variable: 'GRAFANA_ADMIN_PASSWORD')]) {
+                    sh '''
+                        set -e
+                        set -x
 
-                    
-                    kubectl create namespace monitoring || true
+                        kubectl create namespace monitoring || true
 
-                    helm repo add prometheus-community https://prometheus-community.github.io/helm-charts
-                    helm repo add grafana https://grafana.github.io/helm-charts
-                    helm repo update
+                        helm repo add prometheus-community https://prometheus-community.github.io/helm-charts
+                        helm repo add grafana https://grafana.github.io/helm-charts
+                        helm repo update
 
-                    # Prepare the Grafana values file
-                    sed "s|\\${MASTER_EXTERNAL_IP}|${MASTER_EXTERNAL_IP}|g" services/monitoring/grafana-values.yaml > grafana-values-processed.yaml
+                        # Prepare the Grafana values file
+                        sed "s|\\${MASTER_EXTERNAL_IP}|${MASTER_EXTERNAL_IP}|g" services/monitoring/grafana-values.yaml > grafana-values-processed.yaml
 
-                    # Apply ConfigMaps now that we know the namespace exists
-                    kubectl apply -f services/monitoring/datasource.yaml
-                    kubectl apply -f services/monitoring/dashboard.yaml
+                        # Apply ConfigMaps for the standalone Grafana to discover
+                        kubectl apply -f services/monitoring/datasource.yaml
+                        kubectl apply -f services/monitoring/dashboard.yaml
 
-                    # Install Grafana, which will find the pre-existing ConfigMaps on startup
-                    helm upgrade --install grafana grafana/grafana \\
-                    --namespace monitoring --create-namespace \\
-                    --set adminPassword=${GRAFANA_ADMIN_PASSWORD} \\
-                    -f grafana-values-processed.yaml
+                        # 1. Install Standalone Grafana
+                        # This will be configured by the grafana-values-processed.yaml file.
+                        helm upgrade --install grafana grafana/grafana \\
+                            --namespace monitoring \\
+                            --values grafana-values-processed.yaml \\
+                            --set adminPassword=${GRAFANA_ADMIN_PASSWORD}
 
-                    # Configure and install Prometheus Operator stack
-                    helm upgrade --install prometheus-operator prometheus-community/kube-prometheus-stack \\
-                        --namespace monitoring \\
-                        --set prometheus.prometheusSpec.serviceMonitorSelector.matchLabels."release"="prometheus" \\
-                        --set prometheus.prometheusSpec.serviceMonitorNamespaceSelector.matchExpressions[0].key="kubernetes.io.metadata.name" \\
-                        --set prometheus.prometheusSpec.serviceMonitorNamespaceSelector.matchExpressions[0].operator="Exists" \\
-                        --set prometheus.prometheusSpec.routePrefix=/ \\
-                        --set prometheus.prometheusSpec.externalUrl=http://${MASTER_EXTERNAL_IP}:32255/prometheus
+                        # 2. Install Prometheus Stack BUT with its own Grafana DISABLED
+                        # This is the key to preventing conflicts.
+                        helm upgrade --install prometheus-operator prometheus-community/kube-prometheus-stack \\
+                            --namespace monitoring \\
+                            --set grafana.enabled=false \\
+                            --set prometheus.prometheusSpec.serviceMonitorSelector.matchLabels."release"="prometheus" \\
+                            --set prometheus.prometheusSpec.serviceMonitorNamespaceSelector.matchExpressions[0].key="kubernetes.io/metadata.name" \\
+                            --set prometheus.prometheusSpec.serviceMonitorNamespaceSelector.matchExpressions[0].operator="Exists" \\
+                            --set prometheus.prometheusSpec.routePrefix=/ \\
+                            --set prometheus.prometheusSpec.externalUrl=http://${MASTER_EXTERNAL_IP}:32255/prometheus
 
-                    # Apply the remaining YAML files
-                    kubectl apply -f services/monitoring/monitoring-ingress.yaml
-                    kubectl apply -f services/monitoring/inference-service-monitor.yaml
-                '''
+                        # Apply the remaining necessary YAML files
+                        kubectl apply -f services/monitoring/monitoring-ingress.yaml
+                        kubectl apply -f services/monitoring/inference-service-monitor.yaml
+                    '''
+                }
             }
         }
-    }
 
 
         // --- THIS STAGE IS UPDATED WITH THE FIX ---

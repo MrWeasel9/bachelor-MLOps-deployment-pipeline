@@ -4,13 +4,11 @@ grafana.ini:
     root_url: "http://${MASTER_EXTERNAL_IP}:32255/grafana/"
     serve_from_sub_path: true
 
-# Enable the sidecar to watch for datasource ConfigMaps
+# Enable the sidecar to watch for datasource and dashboard ConfigMaps
 sidecar:
   datasources:
     enabled: true
     label: grafana_datasource
-
-  # Enable the sidecar to watch for dashboard ConfigMaps
   dashboards:
     enabled: true
     label: grafana_dashboard

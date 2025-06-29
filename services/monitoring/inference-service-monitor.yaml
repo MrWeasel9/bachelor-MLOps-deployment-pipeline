@@ -1,0 +1,24 @@
+# services/monitoring/inference-service-monitor.yaml
+
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: wine-classifier-monitor
+  namespace: mlops  # Must be in the same namespace as the InferenceService
+  labels:
+    release: prometheus # Ensures this is discovered by your Prometheus Operator
+spec:
+  # This selector targets the service KServe creates for the predictor
+  selector:
+    matchLabels:
+      serving.kserve.io/inferenceservice: mlflow-wine-classifier
+  
+  # This ensures Prometheus looks for the service in the 'mlops' namespace
+  namespaceSelector:
+    matchNames:
+    - mlops
+
+  endpoints:
+  - port: http-prom-metrics  # KServe standard metrics port name
+    path: /metrics           # The path where metrics are exposed
+    interval: 15s            # How often to scrape metrics

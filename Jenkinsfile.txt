@@ -1,0 +1,472 @@
+def MASTER_EXTERNAL_IP
+
+properties([
+    parameters([
+        booleanParam(
+            name: 'DO_DESTROY',
+            defaultValue: false,
+            description: 'Set to true to destroy all infrastructure (DANGER!)'
+        ),
+        booleanParam(
+            name: 'SKIP_INFRA_INSTALL',
+            defaultValue: false,
+            description: 'Set to true to skip Terraform and RKE2 installation and go straight to Helm deployments.'
+        ),
+        booleanParam(
+            name: 'DEPLOY_NEW_MODEL',
+            defaultValue: false,
+            description: 'Set to true to train, build, and deploy a new model.'
+        )
+    ])
+])
+
+pipeline {
+    agent any
+
+    stages {
+        stage('Checkout') {
+            steps {
+                echo "Repository checked out by Jenkins."
+            }
+        }
+
+        stage('Terraform Init & Plan & Apply/Destroy') {
+            when {
+                expression { !params.SKIP_INFRA_INSTALL }
+            }
+            steps {
+                withCredentials([file(credentialsId: 'gcp-terraform-key', variable: 'GCLOUD_AUTH')]) {
+                    dir('terraform') {
+                        sh 'terraform init -no-color'
+                        sh "terraform plan -no-color -var=\"credentials_file=${GCLOUD_AUTH}\" -var=\"project=bachelors-project-461620\""
+                        script {
+                            if (params.DO_DESTROY) {
+                                input message: "Are you REALLY sure you want to destroy ALL infrastructure? This cannot be undone!", ok: "Yes, destroy!"
+                                sh "terraform destroy -no-color -auto-approve -var=\"credentials_file=${GCLOUD_AUTH}\" -var=\"project=bachelors-project-461620\""
+                            } else {
+                                input message: "Deploy new/updated cluster? (This creates/destroys cloud resources!)", ok: "Yes, apply!"
+                                sh "terraform apply -no-color -auto-approve -var=\"credentials_file=${GCLOUD_AUTH}\" -var=\"project=bachelors-project-461620\""
+
+                                sleep(time: 30, unit: 'SECONDS')
+
+                                // Get IPs into Groovy variables
+                                MASTER_INTERNAL_IP = sh(script: "terraform output -raw master_internal_ip", returnStdout: true).trim()
+                                WORKER1_INTERNAL_IP = sh(script: "terraform output -raw worker_1_internal_ip", returnStdout: true).trim()
+                                WORKER2_INTERNAL_IP = sh(script: "terraform output -raw worker_2_internal_ip", returnStdout: true).trim()
+                                MASTER_EXTERNAL_IP = sh(script: "terraform output -raw master_external_ip", returnStdout: true).trim()
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        stage('Configure RKE2') {
+            when {
+                expression { !params.DO_DESTROY && !params.SKIP_INFRA_INSTALL }
+            }
+            steps {
+                withCredentials([file(credentialsId: 'gcp-terraform-key', variable: 'GCLOUD_AUTH')]) {
+                    sh """
+                        set -ex
+                        gcloud auth activate-service-account --key-file=\$GCLOUD_AUTH
+                        gcloud config set project bachelors-project-461620
+                        gcloud config set compute/zone europe-central2-a
+
+                        # Configure master node
+                        gcloud compute ssh mlops-master --command="sudo mkdir -p /etc/rancher/rke2"
+                        gcloud compute ssh mlops-master --command="echo -e 'tls-san:\\n  - ${MASTER_EXTERNAL_IP}' | sudo tee /etc/rancher/rke2/config.yaml"
+                        gcloud compute ssh mlops-master --command="curl -sfL https://get.rke2.io | sudo sh - && sudo systemctl enable rke2-server && sudo systemctl restart rke2-server"
+                        
+                        echo "Waiting for master node to be ready..."
+                        sleep 180
+                        
+                        NODE_TOKEN=\$(gcloud compute ssh mlops-master --command='sudo cat /var/lib/rancher/rke2/server/node-token' --quiet)
+
+                        # --- Docker installation block has been removed ---
+
+                        # Configure worker nodes to join the cluster
+                        echo "--- Configuring worker nodes ---"
+                        gcloud compute ssh mlops-worker-1 --command="curl -sfL https://get.rke2.io | sudo sh - && sudo mkdir -p /etc/rancher/rke2 && echo -e 'server: https://${MASTER_INTERNAL_IP}:9345\\ntoken: \${NODE_TOKEN}' | sudo tee /etc/rancher/rke2/config.yaml && sudo systemctl enable rke2-agent && sudo systemctl restart rke2-agent"
+                        gcloud compute ssh mlops-worker-2 --command="curl -sfL https://get.rke2.io | sudo sh - && sudo mkdir -p /etc/rancher/rke2 && echo -e 'server: https://${MASTER_INTERNAL_IP}:9345\\ntoken: \${NODE_TOKEN}' | sudo tee /etc/rancher/rke2/config.yaml && sudo systemctl enable rke2-agent && sudo systemctl restart rke2-agent"
+                    """
+                }
+            }
+        }
+
+        stage('Export kubeconfig for Local Use') {
+            when {
+                expression { !params.DO_DESTROY && !params.SKIP_INFRA_INSTALL }
+            }
+            steps {
+                withCredentials([file(credentialsId: 'gcp-terraform-key', variable: 'GCLOUD_AUTH')]) {
+                    sh """
+                        gcloud auth activate-service-account --key-file=\$GCLOUD_AUTH
+                        gcloud config set project bachelors-project-461620
+                        gcloud config set compute/zone europe-central2-a
+
+                        # 1. Copy rke2.yaml from master to /tmp and chown to current user
+                        gcloud compute ssh mlops-master --command='sudo cp /etc/rancher/rke2/rke2.yaml /tmp/rke2.yaml && sudo chown \$(whoami) /tmp/rke2.yaml'
+                        gcloud compute scp mlops-master:/tmp/rke2.yaml ./rke2-raw.yaml
+
+                        # 2. Replace loopback address with the master external IP
+                        sed 's/127.0.0.1/${MASTER_EXTERNAL_IP}/' ./rke2-raw.yaml > rke2-for-local.yaml
+
+                        # 3. Print the resulting config
+                        echo '---------------------'
+                        echo 'Here is your kubeconfig for .kube/config:'
+                        cat rke2-for-local.yaml
+                        echo '---------------------'
+                    """
+
+                    // 4. Archive as artifact so you can download from Jenkins UI
+                    archiveArtifacts artifacts: 'rke2-for-local.yaml', onlyIfSuccessful: true
+                }
+            }
+        }
+
+        stage('Configure kubectl context') {
+            when { expression { !params.DO_DESTROY && !params.SKIP_INFRA_INSTALL } }
+            steps {
+                sh '''
+                mkdir -p ~/.kube
+                cp rke2-for-local.yaml ~/.kube/config
+                kubectl version
+                kubectl get nodes -o wide
+                '''
+            }
+        }
+
+        stage('Remove rke2-ingress-nginx') {
+            when { expression { !params.DO_DESTROY } }
+            steps {
+                sh '''
+                # This removes RKE2's default NGINX ingress if it exists.
+                gcloud compute ssh mlops-master --command="sudo mv /var/lib/rancher/rke2/server/manifests/rke2-ingress-nginx.yaml ~ || true"
+                kubectl delete pod -n kube-system -l app.kubernetes.io/name=ingress-nginx || true
+                helm uninstall rke2-ingress-nginx -n kube-system || true
+
+                # These iptables rules seem specific to an RKE2 network setup, keep them.
+                gcloud compute ssh mlops-master --command="sudo iptables -I INPUT -p udp --dport 8472 -j ACCEPT && sudo iptables -I FORWARD -p udp --dport 8472 -j ACCEPT"
+                gcloud compute ssh mlops-worker-1 --command="sudo iptables -I INPUT -p udp --dport 8472 -j ACCEPT && sudo iptables -I FORWARD -p udp --dport 8472 -j ACCEPT"
+                gcloud compute ssh mlops-worker-2 --command="sudo iptables -I INPUT -p udp --dport 8472 -j ACCEPT && sudo iptables -I FORWARD -p udp --dport 8472 -j ACCEPT"
+                '''
+            }
+        }
+
+        /* ----------  NGINX INGRESS  ---------- */
+        // In your Jenkinsfile
+        stage('Install NGINX Ingress Controller (NodePort)') {
+            when { expression { !params.DO_DESTROY } }
+            steps {
+                sh '''
+                helm repo add ingress-nginx https://kubernetes.github.io/ingress-nginx || true
+                helm repo update
+
+                helm upgrade --install ingress-nginx ingress-nginx/ingress-nginx \\
+                --namespace ingress-nginx --create-namespace \\
+                --set controller.service.type=NodePort \\
+                --set controller.service.nodePorts.http=32255 \\
+                --set controller.service.nodePorts.https=30594 \\
+                --set controller.metrics.enabled=true \\
+                --wait
+                '''
+            }
+        }
+
+        /* ----------  STORAGE  ---------- */
+        stage('Install local-path provisioner (v0.0.31)') {
+            when { expression { !params.DO_DESTROY } }
+            steps {
+                sh '''
+                # Always pull the authoritative manifest
+                kubectl apply -f https://raw.githubusercontent.com/rancher/local-path-provisioner/v0.0.31/deploy/local-path-storage.yaml
+
+                # Wait until the pod is ready
+                kubectl -n local-path-storage rollout status deploy/local-path-provisioner --timeout=120s
+                '''
+            }
+        }
+
+        
+        /* ----------  MLOps STACK  ---------- */
+        stage('Deploy MLOps') {
+            when { expression { !params.DO_DESTROY } }
+            steps {
+                script {
+                    // This ensures MASTER_EXTERNAL_IP is populated even if the Terraform stage was skipped
+                    if (!MASTER_EXTERNAL_IP) {
+                        echo "MASTER_EXTERNAL_IP not set, fetching from Terraform state..."
+                        withCredentials([file(credentialsId: 'gcp-terraform-key', variable: 'GCLOUD_AUTH')]) {
+                            dir('terraform') {
+                                MASTER_EXTERNAL_IP = sh(script: "terraform output -raw master_external_ip", returnStdout: true).trim()
+                            }
+                        }
+                    }
+
+                    withCredentials([
+                        usernamePassword(
+                            credentialsId: 'minio-root-creds',
+                            usernameVariable: 'MINIO_ROOT_USER',
+                            passwordVariable: 'MINIO_ROOT_PASSWORD'
+                        ),
+                        string(
+                            credentialsId: 'postgres-password',
+                            variable: 'POSTGRES_PASSWORD'
+                        )
+                    ]) {
+                        sh """
+                            set -e
+                            set -x
+
+                            # Namespace & Secrets
+                            kubectl create namespace mlops || true
+                            kubectl -n mlops create secret generic aws-s3-credentials \\
+                            --from-literal=AWS_ACCESS_KEY_ID=\${MINIO_ROOT_USER} \\
+                            --from-literal=AWS_SECRET_ACCESS_KEY=\${MINIO_ROOT_PASSWORD} \\
+                            --dry-run=client -o yaml | kubectl apply -f -
+
+                            # Repos
+                            helm repo add bitnami https://charts.bitnami.com/bitnami
+                            helm repo update
+
+                            # MinIO
+                            helm upgrade --install minio bitnami/minio \\
+                            --namespace mlops \\
+                            --set auth.rootUser=\${MINIO_ROOT_USER} \\
+                            --set auth.rootPassword=\${MINIO_ROOT_PASSWORD} \\
+                            -f services/minio/values.yaml
+
+                            # --- BLOCK FOR AUTOMATIC MINIO BUCKET CREATION ---
+                            # Wait for MinIO pods to be ready before trying to configure it
+                            echo "--- Waiting for MinIO to be ready ---"
+                            kubectl -n mlops rollout status deployment/minio --timeout=300s
+                            
+                            # Clean up any previous failed job before applying.
+                            echo "--- Deleting old setup job if it exists ---"
+                            kubectl delete job minio-bucket-setup -n mlops --ignore-not-found=true
+
+                            # Apply the setup job manifest from the file
+                            echo "--- Applying MinIO bucket setup job ---"
+                            kubectl apply -f services/minio/minio-bucket-setup.yaml
+
+                            # Wait for the setup job to complete its job
+                            echo "--- Waiting for MinIO bucket setup to complete ---"
+                            kubectl wait --for=condition=complete job/minio-bucket-setup -n mlops --timeout=120s
+
+                            # Clean up the setup job
+                            echo "--- Cleaning up MinIO setup job ---"
+                            kubectl delete job minio-bucket-setup -n mlops
+                            # --- END OF BLOCK ---
+
+                            # PostgreSQL
+                            helm upgrade --install postgresql bitnami/postgresql \\
+                            --namespace mlops \\
+                            --set auth.postgresPassword=\${POSTGRES_PASSWORD} \\
+                            --set auth.username=mlflow \\
+                            --set auth.password=\${POSTGRES_PASSWORD} \\
+                            --set auth.database=mlflow \\
+                            -f services/postgresql/values.yaml
+
+                            # MLflow Deployment & Service
+                            kubectl apply -f services/mlflow/mlflow.yaml
+
+                            # === APPLY ALL INGRESS CONFIGS ===
+                            # Apply MLflow Ingress
+                            kubectl apply -f services/mlflow/mlflow-ingress.yaml
+
+                            # Apply MinIO Console Ingress
+                            kubectl apply -f services/minio/minio-ingress.yaml
+                        """
+                    }
+                }
+            }
+        }
+
+        // Jenkinsfile
+
+      stage('Deploy monitoring stack') {
+          when { expression { !params.DO_DESTROY } }
+          steps {
+              sh '''
+                  helm repo add prometheus-community https://prometheus-community.github.io/helm-charts
+                  helm repo add grafana https://grafana.github.io/helm-charts
+                  helm repo update
+
+                  # Prepare the Grafana values file by replacing the placeholder
+                  # This is a robust way to handle dynamic variables in YAML
+                  sed "s|\\${MASTER_EXTERNAL_IP}|${MASTER_EXTERNAL_IP}|g" services/monitoring/grafana-values.yaml > grafana-values-processed.yaml
+
+                  # CORRECTED: Install Grafana using the processed values file
+                  helm upgrade --install grafana grafana/grafana \\
+                  --namespace monitoring --create-namespace \\
+                  -f grafana-values-processed.yaml
+
+                  # Configure and install Prometheus Operator stack
+                  helm upgrade --install prometheus-operator prometheus-community/kube-prometheus-stack \\
+                    --namespace monitoring \\
+                    --set prometheus.prometheusSpec.serviceMonitorSelector.matchLabels."release"="prometheus" \\
+                    --set prometheus.prometheusSpec.serviceMonitorNamespaceSelector.matchExpressions[0].key="kubernetes.io/metadata.name" \\
+                    --set prometheus.prometheusSpec.serviceMonitorNamespaceSelector.matchExpressions[0].operator="Exists" \\
+                    --set prometheus.prometheusSpec.routePrefix=/ \\
+                    --set prometheus.prometheusSpec.externalUrl=http://${MASTER_EXTERNAL_IP}:32255/prometheus \\
+
+                  # Apply the Ingress rules after services are installed
+                  kubectl apply -f services/monitoring/monitoring-ingress.yaml
+                  kubectl apply -f services/monitoring/inference-service-monitor.yaml
+              '''
+          }
+      }
+
+
+        // --- THIS STAGE IS UPDATED WITH THE FIX ---
+        stage('Install KServe and Dependencies') {
+            when { expression { !params.DO_DESTROY && !params.SKIP_INFRA_DEPLOY } }
+            steps {
+                sh '''
+                    set -e
+                    set -x
+
+                    echo "--- 1. Installing Istio ---"
+                    curl -L https://istio.io/downloadIstio | ISTIO_VERSION=1.22.1 TARGET_ARCH=x86_64 sh -
+                    ./istio-1.22.1/bin/istioctl install --set profile=minimal -y
+                    kubectl label namespace mlops istio-injection=enabled --overwrite=true
+
+                    echo "--- 2. Installing Knative Serving ---"
+                    kubectl apply -f https://github.com/knative/serving/releases/download/knative-v1.14.0/serving-crds.yaml
+                    kubectl apply -f https://github.com/knative/serving/releases/download/knative-v1.14.0/serving-core.yaml
+                    echo "--- Waiting for Knative Serving webhooks to be ready ---"
+                    kubectl wait --for=condition=Available deployment --all --namespace=knative-serving --timeout=300s
+                    kubectl apply -f https://github.com/knative/net-istio/releases/download/knative-v1.14.0/net-istio.yaml
+
+                    echo "--- 3. Installing Cert-Manager ---"
+                    kubectl apply -f https://github.com/cert-manager/cert-manager/releases/download/v1.15.1/cert-manager.yaml
+                    echo "--- Waiting for Cert-Manager webhook to be ready ---"
+                    kubectl wait --for=condition=Available deployment --all --namespace=cert-manager --timeout=300s
+
+                    echo "--- 4. Installing KServe ---"
+                    # Apply the core KServe manifest
+                    kubectl apply -f https://github.com/kserve/kserve/releases/download/v0.13.0/kserve.yaml
+                    
+                    echo "--- Waiting for KServe webhook to be ready ---"
+                    kubectl wait --for=condition=Available deployment --all --namespace=kserve --timeout=300s
+
+                    # Apply the cluster-wide resources
+                    kubectl apply -f https://github.com/kserve/kserve/releases/download/v0.13.0/kserve-cluster-resources.yaml
+
+                    echo "--- KServe installation complete! ---"
+                '''
+            }
+        }
+
+        stage('Build and Push Trainer Image') {
+            // This stage only runs if files in the 'services/training' directory have changed.
+            when { changeset "services/training/**" }
+            steps {
+                withCredentials([
+                    usernamePassword(credentialsId: 'dockerhub-creds', usernameVariable: 'DOCKER_USERNAME', passwordVariable: 'DOCKER_PASSWORD')
+                ]) {
+                    script {
+                        def TRAINER_IMAGE_NAME = "${DOCKER_USERNAME}/mlops-trainer:latest"
+                        
+                        echo "--- Building and pushing new trainer image: ${TRAINER_IMAGE_NAME} ---"
+                        dir('services/training') {
+                            sh "docker build -t ${TRAINER_IMAGE_NAME} ."
+                            sh "echo '${DOCKER_PASSWORD}' | docker login --username '${DOCKER_USERNAME}' --password-stdin"
+                            sh "docker push ${TRAINER_IMAGE_NAME}"
+                        }
+                    }
+                }
+            }
+        }
+        
+
+        // --- THIS IS THE NEW AUTOMATED CI/CD STAGE FOR MODELS ---
+        
+        stage('Train, Build, and Deploy Model') {
+        when { expression { params.DEPLOY_NEW_MODEL } }
+        steps {
+            withCredentials([
+                usernamePassword(credentialsId: 'dockerhub-creds', usernameVariable: 'DOCKER_USERNAME', passwordVariable: 'DOCKER_PASSWORD')
+            ]) {
+                script {
+                    def DOCKER_IMAGE_NAME = "${DOCKER_USERNAME}/mlflow-wine-classifier:v${env.BUILD_NUMBER}"
+                    def newRunId = ''
+
+                    try {
+                        // --- 1. Train Model ---
+                        echo "--- Creating ConfigMap for training scripts ---"
+                        sh "kubectl create configmap training-scripts --from-file=ml-models/wine-quality/hyperparameter_tuning.py -n mlops --dry-run=client -o yaml | kubectl apply -f -"
+                        
+                        echo "--- Starting model training job ---"
+                        sh "kubectl delete job model-training-job -n mlops --ignore-not-found=true"
+                        sh "kubectl apply -f services/training/trainer-job.yaml"
+                        sh "kubectl wait --for=condition=complete job/model-training-job -n mlops --timeout=300s"
+                        
+                        echo "--- Fetching new run ID from training logs ---"
+                        def trainingPodName = sh(script: "kubectl get pods -n mlops -l job-name=model-training-job -o jsonpath='{.items[0].metadata.name}'", returnStdout: true).trim()
+                        def logs = sh(script: "kubectl logs ${trainingPodName} -n mlops -c trainer", returnStdout: true).trim()
+                        def logLines = logs.split('\\n')
+                        newRunId = logLines.last().trim()
+
+                        if (!newRunId || !newRunId.matches('[a-f0-9]{32}')) {
+                            error "Could not retrieve a valid Run ID from the training job logs. Full Logs:\n${logs}"
+                        }
+                        echo "Found new Run ID: ${newRunId}"
+
+                        // --- 2. Build Image with Kaniko ---
+                        
+                        // NEW: Create a Kubernetes secret for Docker Hub authentication
+                        echo "--- Creating Docker credentials secret for Kaniko ---"
+                        sh """
+                          kubectl create secret docker-registry dockerhub-creds \\
+                            --docker-server=https://index.docker.io/v1/ \\
+                            --docker-username=${DOCKER_USERNAME} \\
+                            --docker-password='${DOCKER_PASSWORD}' \\
+                            -n mlops \\
+                            --dry-run=client -o yaml | kubectl apply -f -
+                        """
+
+                        echo "--- Starting model builder job for Run ID: ${newRunId} ---"
+                        def builderManifest = readFile('services/training/builder-job.yaml')
+                        builderManifest = builderManifest.replace('<RUN_ID_PLACEHOLDER>', newRunId) 
+                        builderManifest = builderManifest.replace('<DOCKER_IMAGE_NAME_PLACEHOLDER>', DOCKER_IMAGE_NAME)
+                        
+                        sh "kubectl delete job model-builder-job -n mlops --ignore-not-found=true"
+                        writeFile(file: 'temp-builder-job.yaml', text: builderManifest)
+                        sh "kubectl apply -f temp-builder-job.yaml"
+                        sh "kubectl wait --for=condition=complete job/model-builder-job -n mlops --timeout=1000s"
+                        
+                        // --- 3. Deploy to KServe ---
+                        echo "--- Deploying image ${DOCKER_IMAGE_NAME} to KServe ---"
+                        def inferenceManifest = readFile('services/kserve/inference-service.yaml')
+                        inferenceManifest = inferenceManifest.replace('<DOCKER_IMAGE_NAME>', DOCKER_IMAGE_NAME)
+                        writeFile(file: 'temp-inference-service.yaml', text: inferenceManifest)
+                        sh "kubectl apply -f temp-inference-service.yaml"
+
+                        // 1. Wait until the InferenceService is ready
+                        sh """
+                        echo '--- Waiting for KServe to become Ready ---'
+                        kubectl wait --for=condition=Ready inferenceservice/mlflow-wine-classifier \
+                                    -n mlops --timeout=180s
+                        """
+
+                        sh "kubectl apply -f services/kserve/predictor-service.yaml"
+                        sh "kubectl apply -f services/kserve/model-ingress.yaml"
+
+
+
+                    } finally {
+                        // --- 4. Cleanup ---
+                        echo "--- Cleaning up temporary files and resources ---"
+                        sh "rm -f temp-builder-job.yaml temp-inference-service.yaml"
+                        sh "kubectl delete configmap training-scripts -n mlops --ignore-not-found=true"
+                        sh "kubectl delete job model-training-job -n mlops --ignore-not-found=true"
+                        sh "kubectl delete job model-builder-job -n mlops --ignore-not-found=true"
+                    }
+                }
+            }
+        }
+    }
+    }
+}

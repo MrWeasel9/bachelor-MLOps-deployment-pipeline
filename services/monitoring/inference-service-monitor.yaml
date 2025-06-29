@@ -1,0 +1,19 @@
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: mlflow-wine-classifier-monitor
+  namespace: monitoring
+  labels:
+    release: prometheus  # Matches Prometheus selector
+spec:
+  jobLabel: kserve-metrics
+  podTargetLabels: [serving.kserve.io/inferenceservice]
+  namespaceSelector:
+    matchNames: [mlops]
+  selector:
+    matchLabels:
+      serving.kserve.io/inferenceservice: mlflow-wine-classifier
+  endpoints:
+  - port: http  # Matches port name in predictor-service
+    path: /metrics
+    interval: 15s

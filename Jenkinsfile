@@ -313,6 +313,7 @@ pipeline {
 
                   # Apply the Ingress rules after services are installed
                   kubectl apply -f services/monitoring/monitoring-ingress.yaml
+                  kubectl apply -f services/monitoring/inference-service-monitor.yaml
               '''
           }
       }

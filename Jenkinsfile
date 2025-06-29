@@ -290,20 +290,27 @@ pipeline {
             steps {
                 withCredentials([string(credentialsId: 'grafana-admin-pass', variable: 'GRAFANA_ADMIN_PASSWORD')]) {
                     sh '''
+                        set -e
+                        set -x
+
                         helm repo add prometheus-community https://prometheus-community.github.io/helm-charts
                         helm repo add grafana https://grafana.github.io/helm-charts
                         helm repo update
 
-                        # Prepare the Grafana values file by replacing the placeholder
-                        # This is a robust way to handle dynamic variables in YAML
+                        # Prepare the Grafana values file
                         sed "s|\\${MASTER_EXTERNAL_IP}|${MASTER_EXTERNAL_IP}|g" services/monitoring/grafana-values.yaml > grafana-values-processed.yaml
 
+                        # --- THE FIX: APPLY CONFIGMAPS FIRST ---
+                        # This ensures they exist in the cluster before Grafana starts.
+                        kubectl apply -f services/monitoring/datasource.yaml
+                        kubectl apply -f services/monitoring/dashboard.yaml
 
-                        # CORRECTED: Install Grafana using the processed values file AND set the admin password
-                            helm upgrade --install grafana grafana/grafana \\
-                            --namespace monitoring --create-namespace \\
-                            --set adminPassword=\${GRAFANA_ADMIN_PASSWORD} \\
-                            -f grafana-values-processed.yaml
+                        # --- HELM INSTALL NOW KNOWS TO LOOK FOR THEM ---
+                        # The updated grafana-values.yaml enables the sidecars that find these ConfigMaps.
+                        helm upgrade --install grafana grafana/grafana \\
+                        --namespace monitoring --create-namespace \\
+                        --set adminPassword=${GRAFANA_ADMIN_PASSWORD} \\
+                        -f grafana-values-processed.yaml
 
                         # Configure and install Prometheus Operator stack
                         helm upgrade --install prometheus-operator prometheus-community/kube-prometheus-stack \\
@@ -312,11 +319,9 @@ pipeline {
                             --set prometheus.prometheusSpec.serviceMonitorNamespaceSelector.matchExpressions[0].key="kubernetes.io/metadata.name" \\
                             --set prometheus.prometheusSpec.serviceMonitorNamespaceSelector.matchExpressions[0].operator="Exists" \\
                             --set prometheus.prometheusSpec.routePrefix=/ \\
-                            --set prometheus.prometheusSpec.externalUrl=http://${MASTER_EXTERNAL_IP}:32255/prometheus \\
+                            --set prometheus.prometheusSpec.externalUrl=http://${MASTER_EXTERNAL_IP}:32255/prometheus
 
-                        # Apply the Ingress rules after services are installed
-                        kubectl apply -f services/monitoring/datasource.yaml
-                        kubectl apply -f services/monitoring/dashboard.yaml
+                        # Apply the remaining YAML files
                         kubectl apply -f services/monitoring/monitoring-ingress.yaml
                         kubectl apply -f services/monitoring/inference-service-monitor.yaml
                     '''

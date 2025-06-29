@@ -1,0 +1,20 @@
+# services/monitoring/datasource.yaml
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: grafana-datasources
+  namespace: monitoring # Must be the same namespace as Grafana
+  labels:
+    grafana_datasource: "1"
+spec:
+  data:
+    prometheus-datasource.yaml: |-
+      apiVersion: 1
+      datasources:
+      - name: Prometheus
+        type: prometheus
+        access: proxy
+        orgId: 1
+        url: http://prometheus-operated.monitoring.svc.cluster.local:9090
+        isDefault: true
+        editable: true

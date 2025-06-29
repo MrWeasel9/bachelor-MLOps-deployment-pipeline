@@ -285,38 +285,44 @@ pipeline {
 
         // Jenkinsfile
 
-      stage('Deploy monitoring stack') {
-          when { expression { !params.DO_DESTROY } }
-          steps {
-              sh '''
-                  helm repo add prometheus-community https://prometheus-community.github.io/helm-charts
-                  helm repo add grafana https://grafana.github.io/helm-charts
-                  helm repo update
+        stage('Deploy monitoring stack') {
+            when { expression { !params.DO_DESTROY } }
+            steps {
+                withCredentials([string(credentialsId: 'grafana-admin-pass', variable: 'GRAFANA_ADMIN_PASSWORD')]) {
+                    sh '''
+                        helm repo add prometheus-community https://prometheus-community.github.io/helm-charts
+                        helm repo add grafana https://grafana.github.io/helm-charts
+                        helm repo update
 
-                  # Prepare the Grafana values file by replacing the placeholder
-                  # This is a robust way to handle dynamic variables in YAML
-                  sed "s|\\${MASTER_EXTERNAL_IP}|${MASTER_EXTERNAL_IP}|g" services/monitoring/grafana-values.yaml > grafana-values-processed.yaml
+                        # Prepare the Grafana values file by replacing the placeholder
+                        # This is a robust way to handle dynamic variables in YAML
+                        sed "s|\\${MASTER_EXTERNAL_IP}|${MASTER_EXTERNAL_IP}|g" services/monitoring/grafana-values.yaml > grafana-values-processed.yaml
 
-                  # CORRECTED: Install Grafana using the processed values file
-                  helm upgrade --install grafana grafana/grafana \\
-                  --namespace monitoring --create-namespace \\
-                  -f grafana-values-processed.yaml
 
-                  # Configure and install Prometheus Operator stack
-                  helm upgrade --install prometheus-operator prometheus-community/kube-prometheus-stack \\
-                    --namespace monitoring \\
-                    --set prometheus.prometheusSpec.serviceMonitorSelector.matchLabels."release"="prometheus" \\
-                    --set prometheus.prometheusSpec.serviceMonitorNamespaceSelector.matchExpressions[0].key="kubernetes.io/metadata.name" \\
-                    --set prometheus.prometheusSpec.serviceMonitorNamespaceSelector.matchExpressions[0].operator="Exists" \\
-                    --set prometheus.prometheusSpec.routePrefix=/ \\
-                    --set prometheus.prometheusSpec.externalUrl=http://${MASTER_EXTERNAL_IP}:32255/prometheus \\
+                        # CORRECTED: Install Grafana using the processed values file AND set the admin password
+                            helm upgrade --install grafana grafana/grafana \\
+                            --namespace monitoring --create-namespace \\
+                            --set adminPassword=\${GRAFANA_ADMIN_PASSWORD} \\
+                            -f grafana-values-processed.yaml
 
-                  # Apply the Ingress rules after services are installed
-                  kubectl apply -f services/monitoring/monitoring-ingress.yaml
-                  kubectl apply -f services/monitoring/inference-service-monitor.yaml
-              '''
-          }
-      }
+                        # Configure and install Prometheus Operator stack
+                        helm upgrade --install prometheus-operator prometheus-community/kube-prometheus-stack \\
+                            --namespace monitoring \\
+                            --set prometheus.prometheusSpec.serviceMonitorSelector.matchLabels."release"="prometheus" \\
+                            --set prometheus.prometheusSpec.serviceMonitorNamespaceSelector.matchExpressions[0].key="kubernetes.io/metadata.name" \\
+                            --set prometheus.prometheusSpec.serviceMonitorNamespaceSelector.matchExpressions[0].operator="Exists" \\
+                            --set prometheus.prometheusSpec.routePrefix=/ \\
+                            --set prometheus.prometheusSpec.externalUrl=http://${MASTER_EXTERNAL_IP}:32255/prometheus \\
+
+                        # Apply the Ingress rules after services are installed
+                        kubectl apply -f services/monitoring/datasource.yaml
+                        kubectl apply -f services/monitoring/dashboard.yaml
+                        kubectl apply -f services/monitoring/monitoring-ingress.yaml
+                        kubectl apply -f services/monitoring/inference-service-monitor.yaml
+                    '''
+                }
+            }
+        }
 
 
         // --- THIS STAGE IS UPDATED WITH THE FIX ---

@@ -5,10 +5,13 @@ metadata:
   name: wine-classifier-dashboard
   namespace: monitoring
   labels:
-    grafana_dashboard: "1" # This label tells Grafana to import this dashboard
-spec:
-  data:
-    wine-classifier.json: |-
+    grafana_dashboard: "1"
+# The 'data' field should be at the top level, not inside 'spec'
+data:
+  wine-classifier.json: |-
+    #
+    # PASTE THE ENTIRE JSON MODEL YOU COPIED FROM GRAFANA HERE
+    #
       {
         "id": 1,
         "type": "timeseries",

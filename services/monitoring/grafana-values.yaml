@@ -4,13 +4,3 @@ grafana.ini:
     # The crucial part is the explicit URL with the trailing slash
     root_url: "http://${MASTER_EXTERNAL_IP}:32255/grafana/"
     serve_from_sub_path: true
-
-datasources:
-  datasources.yaml:
-    apiVersion: 1
-    datasources:
-    - name: Prometheus
-      type: prometheus
-      url: http://prometheus-operated.monitoring.svc:9090
-      access: proxy
-      isDefault: true

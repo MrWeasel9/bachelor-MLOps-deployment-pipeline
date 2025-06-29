@@ -215,44 +215,69 @@ pipeline {
                             variable: 'POSTGRES_PASSWORD'
                         )
                     ]) {
-                        sh '''
+                        sh """
                             set -e
                             set -x
 
-                            # --- THE FIX: CREATE THE NAMESPACE FIRST ---
-                            # This ensures the 'monitoring' namespace exists before we try to deploy anything into it.
-                            kubectl create namespace monitoring || true
+                            # Namespace & Secrets
+                            kubectl create namespace mlops || true
+                            kubectl -n mlops create secret generic aws-s3-credentials \\
+                            --from-literal=AWS_ACCESS_KEY_ID=\${MINIO_ROOT_USER} \\
+                            --from-literal=AWS_SECRET_ACCESS_KEY=\${MINIO_ROOT_PASSWORD} \\
+                            --dry-run=client -o yaml | kubectl apply -f -
 
-                            helm repo add prometheus-community https://prometheus-community.github.io/helm-charts
-                            helm repo add grafana https://grafana.github.io/helm-charts
+                            # Repos
+                            helm repo add bitnami https://charts.bitnami.com/bitnami
                             helm repo update
 
-                            # Prepare the Grafana values file
-                            sed "s|\\${MASTER_EXTERNAL_IP}|${MASTER_EXTERNAL_IP}|g" services/monitoring/grafana-values.yaml > grafana-values-processed.yaml
+                            # MinIO
+                            helm upgrade --install minio bitnami/minio \\
+                            --namespace mlops \\
+                            --set auth.rootUser=\${MINIO_ROOT_USER} \\
+                            --set auth.rootPassword=\${MINIO_ROOT_PASSWORD} \\
+                            -f services/minio/values.yaml
 
-                            # Apply ConfigMaps now that we know the namespace exists
-                            kubectl apply -f services/monitoring/datasource.yaml
-                            kubectl apply -f services/monitoring/dashboard.yaml
+                            # --- BLOCK FOR AUTOMATIC MINIO BUCKET CREATION ---
+                            # Wait for MinIO pods to be ready before trying to configure it
+                            echo "--- Waiting for MinIO to be ready ---"
+                            kubectl -n mlops rollout status deployment/minio --timeout=300s
+                            
+                            # Clean up any previous failed job before applying.
+                            echo "--- Deleting old setup job if it exists ---"
+                            kubectl delete job minio-bucket-setup -n mlops --ignore-not-found=true
 
-                            # Install Grafana, which will find the pre-existing ConfigMaps on startup
-                            helm upgrade --install grafana grafana/grafana \\
-                            --namespace monitoring \\
-                            --set adminPassword=${GRAFANA_ADMIN_PASSWORD} \\
-                            -f grafana-values-processed.yaml
+                            # Apply the setup job manifest from the file
+                            echo "--- Applying MinIO bucket setup job ---"
+                            kubectl apply -f services/minio/minio-bucket-setup.yaml
 
-                            # Configure and install Prometheus Operator stack
-                            helm upgrade --install prometheus-operator prometheus-community/kube-prometheus-stack \\
-                                --namespace monitoring \\
-                                --set prometheus.prometheusSpec.serviceMonitorSelector.matchLabels."release"="prometheus" \\
-                                --set prometheus.prometheusSpec.serviceMonitorNamespaceSelector.matchExpressions[0].key="kubernetes.io.metadata.name" \\
-                                --set prometheus.prometheusSpec.serviceMonitorNamespaceSelector.matchExpressions[0].operator="Exists" \\
-                                --set prometheus.prometheusSpec.routePrefix=/ \\
-                                --set prometheus.prometheusSpec.externalUrl=http://${MASTER_EXTERNAL_IP}:32255/prometheus
+                            # Wait for the setup job to complete its job
+                            echo "--- Waiting for MinIO bucket setup to complete ---"
+                            kubectl wait --for=condition=complete job/minio-bucket-setup -n mlops --timeout=120s
 
-                            # Apply the remaining YAML files
-                            kubectl apply -f services/monitoring/monitoring-ingress.yaml
-                            kubectl apply -f services/monitoring/inference-service-monitor.yaml
-                        '''
+                            # Clean up the setup job
+                            echo "--- Cleaning up MinIO setup job ---"
+                            kubectl delete job minio-bucket-setup -n mlops
+                            # --- END OF BLOCK ---
+
+                            # PostgreSQL
+                            helm upgrade --install postgresql bitnami/postgresql \\
+                            --namespace mlops \\
+                            --set auth.postgresPassword=\${POSTGRES_PASSWORD} \\
+                            --set auth.username=mlflow \\
+                            --set auth.password=\${POSTGRES_PASSWORD} \\
+                            --set auth.database=mlflow \\
+                            -f services/postgresql/values.yaml
+
+                            # MLflow Deployment & Service
+                            kubectl apply -f services/mlflow/mlflow.yaml
+
+                            # === APPLY ALL INGRESS CONFIGS ===
+                            # Apply MLflow Ingress
+                            kubectl apply -f services/mlflow/mlflow-ingress.yaml
+
+                            # Apply MinIO Console Ingress
+                            kubectl apply -f services/minio/minio-ingress.yaml
+                        """
                     }
                 }
             }
@@ -261,48 +286,49 @@ pipeline {
         // Jenkinsfile
 
         stage('Deploy monitoring stack') {
-            when { expression { !params.DO_DESTROY } }
-            steps {
-                withCredentials([string(credentialsId: 'grafana-admin-pass', variable: 'GRAFANA_ADMIN_PASSWORD')]) {
-                    sh '''
-                        set -e
-                        set -x
+        when { expression { !params.DO_DESTROY } }
+        steps {
+            withCredentials([string(credentialsId: 'grafana-admin-pass', variable: 'GRAFANA_ADMIN_PASSWORD')]) {
+                sh '''
+                    set -e
+                    set -x
 
-                        helm repo add prometheus-community https://prometheus-community.github.io/helm-charts
-                        helm repo add grafana https://grafana.github.io/helm-charts
-                        helm repo update
+                    
+                    kubectl create namespace monitoring || true
 
-                        # Prepare the Grafana values file
-                        sed "s|\\${MASTER_EXTERNAL_IP}|${MASTER_EXTERNAL_IP}|g" services/monitoring/grafana-values.yaml > grafana-values-processed.yaml
+                    helm repo add prometheus-community https://prometheus-community.github.io/helm-charts
+                    helm repo add grafana https://grafana.github.io/helm-charts
+                    helm repo update
 
-                        # --- THE FIX: APPLY CONFIGMAPS FIRST ---
-                        # This ensures they exist in the cluster before Grafana starts.
-                        kubectl apply -f services/monitoring/datasource.yaml
-                        kubectl apply -f services/monitoring/dashboard.yaml
+                    # Prepare the Grafana values file
+                    sed "s|\\${MASTER_EXTERNAL_IP}|${MASTER_EXTERNAL_IP}|g" services/monitoring/grafana-values.yaml > grafana-values-processed.yaml
 
-                        # --- HELM INSTALL NOW KNOWS TO LOOK FOR THEM ---
-                        # The updated grafana-values.yaml enables the sidecars that find these ConfigMaps.
-                        helm upgrade --install grafana grafana/grafana \\
-                        --namespace monitoring --create-namespace \\
-                        --set adminPassword=${GRAFANA_ADMIN_PASSWORD} \\
-                        -f grafana-values-processed.yaml
+                    # Apply ConfigMaps now that we know the namespace exists
+                    kubectl apply -f services/monitoring/datasource.yaml
+                    kubectl apply -f services/monitoring/dashboard.yaml
 
-                        # Configure and install Prometheus Operator stack
-                        helm upgrade --install prometheus-operator prometheus-community/kube-prometheus-stack \\
-                            --namespace monitoring \\
-                            --set prometheus.prometheusSpec.serviceMonitorSelector.matchLabels."release"="prometheus" \\
-                            --set prometheus.prometheusSpec.serviceMonitorNamespaceSelector.matchExpressions[0].key="kubernetes.io/metadata.name" \\
-                            --set prometheus.prometheusSpec.serviceMonitorNamespaceSelector.matchExpressions[0].operator="Exists" \\
-                            --set prometheus.prometheusSpec.routePrefix=/ \\
-                            --set prometheus.prometheusSpec.externalUrl=http://${MASTER_EXTERNAL_IP}:32255/prometheus
+                    # Install Grafana, which will find the pre-existing ConfigMaps on startup
+                    helm upgrade --install grafana grafana/grafana \\
+                    --namespace monitoring --create-namespace \\
+                    --set adminPassword=${GRAFANA_ADMIN_PASSWORD} \\
+                    -f grafana-values-processed.yaml
 
-                        # Apply the remaining YAML files
-                        kubectl apply -f services/monitoring/monitoring-ingress.yaml
-                        kubectl apply -f services/monitoring/inference-service-monitor.yaml
-                    '''
-                }
+                    # Configure and install Prometheus Operator stack
+                    helm upgrade --install prometheus-operator prometheus-community/kube-prometheus-stack \\
+                        --namespace monitoring \\
+                        --set prometheus.prometheusSpec.serviceMonitorSelector.matchLabels."release"="prometheus" \\
+                        --set prometheus.prometheusSpec.serviceMonitorNamespaceSelector.matchExpressions[0].key="kubernetes.io.metadata.name" \\
+                        --set prometheus.prometheusSpec.serviceMonitorNamespaceSelector.matchExpressions[0].operator="Exists" \\
+                        --set prometheus.prometheusSpec.routePrefix=/ \\
+                        --set prometheus.prometheusSpec.externalUrl=http://${MASTER_EXTERNAL_IP}:32255/prometheus
+
+                    # Apply the remaining YAML files
+                    kubectl apply -f services/monitoring/monitoring-ingress.yaml
+                    kubectl apply -f services/monitoring/inference-service-monitor.yaml
+                '''
             }
         }
+    }
 
 
         // --- THIS STAGE IS UPDATED WITH THE FIX ---
